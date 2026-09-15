@@ -155,7 +155,7 @@ The public checkpoint does **not** claim a working pkgsrc bootstrap or package i
 - Reset is verified on the QEMU legacy-PC/i8042 path—not ACPI-only or physical machines. A CPU halt is not a claim of physical power-off.
 - The previously documented Vim xdiff provenance gap remains open.
 - There are no production-ready installer images or published CI guarantees in this checkpoint.
-- Some tracked include symlinks are development-host-specific. A fresh-clone build on other hosts is not yet qualified and may require regenerating those include trees.
+- Include links depend on upstream source trees restored by `tools/fetch_world_sources.sh`. A fresh-clone build on other hosts is not yet qualified.
 
 ## Repository map
 

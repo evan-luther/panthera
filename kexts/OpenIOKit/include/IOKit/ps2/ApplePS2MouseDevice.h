@@ -1,1 +1,1 @@
-/Users/admin/panthera/src/ApplePS2Controller-8/ApplePS2MouseDevice.h
+../../../../../src/ApplePS2Controller-8/ApplePS2MouseDevice.h

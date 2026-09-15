@@ -36,6 +36,13 @@ Included license material
   Vendored LLVM scalar math retains its complete Apache/LLVM-exception text
   at userland/libsystem/build/shims/libsystem_c/math/LICENSE.TXT.
 
+* OpenZFS CDDL 1.0: LICENSES/CDDL-1.0.txt.
+  Applies to CDDL-covered OpenZFS source and the corresponding modifications
+  under kexts/zfs/, including kexts/zfs/patches/openzfs-async-rmnode.patch.
+  Retain the individual upstream copyright and contributor notices; files
+  identifying a different license retain those terms.
+  License text source: https://github.com/openzfs/zfs/blob/zfs-2.3.1/LICENSE
+
 * ICU and Unicode data: LICENSES/ICU-76142.3.1.1.txt.
   This is the complete icu/LICENSE from apple-oss-distributions/ICU, tag
   ICU-76142.3.1.1, including its third-party data notices. It accompanies
