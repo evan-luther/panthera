@@ -1,0 +1,179 @@
+#!/usr/bin/expect -f
+# Shell functionality tests for Panthera — v2
+# Skips Ctrl+C test (known broken), tests everything else
+
+set timeout 90
+log_file -noappend /Users/admin/panthera/tests/shell_tests2.log
+
+# Boot QEMU non-graphically
+spawn env PANTHERA_NOGRAPHIC=1 /Users/admin/panthera/boot/qemu/run_phase2_qemu.sh \
+    --no-reboot --ssh-port 0 \
+    --root-disk /Users/admin/panthera/images/qemu/panthera-root.img
+
+# Wait for the shell prompt
+expect {
+    -re {(%|#)\s*$} {
+        send_user "\n>>> GOT PROMPT <<<\n"
+    }
+    timeout {
+        send_user "\n>>> TIMEOUT waiting for prompt <<<\n"
+        exit 1
+    }
+}
+sleep 2
+
+# Helper: run a command and wait for prompt
+proc run_cmd {cmd} {
+    send "$cmd\r"
+    expect -re {(%|#)\s*$}
+}
+
+# ============================================================
+send_user "\n\n========== TEST 1: Pipes ==========\n"
+run_cmd "echo MARKER_T1"
+send "ls /bin | head -5\r"
+expect {
+    -re {(%|#)\s*$} { send_user "\n>>> T1a done <<<\n" }
+    timeout { send_user "\n>>> T1a TIMEOUT <<<\n" }
+}
+
+send "echo hello | cat\r"
+expect {
+    -re {hello} { send_user "\n>>> T1b PASS: saw hello <<<\n" }
+    timeout { send_user "\n>>> T1b TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+# ============================================================
+send_user "\n\n========== TEST 2: Redirection ==========\n"
+send "echo hello > /tmp/test 2>&1; echo RC=\$?\r"
+expect {
+    -re {RC=0} { send_user "\n>>> T2a write OK <<<\n" }
+    -re {RC=} { send_user "\n>>> T2a write FAILED <<<\n" }
+    timeout { send_user "\n>>> T2a TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+send "cat /tmp/test 2>&1\r"
+expect {
+    -re {hello} { send_user "\n>>> T2b read PASS <<<\n" }
+    -re {No such file} { send_user "\n>>> T2b /tmp missing <<<\n" }
+    timeout { send_user "\n>>> T2b TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+# Fallback test
+send "echo hello2 > /var/root/test2 2>&1; echo RC=\$?\r"
+expect {
+    -re {RC=0} { send_user "\n>>> T2c /var/root write OK <<<\n" }
+    -re {RC=} { send_user "\n>>> T2c /var/root write FAILED <<<\n" }
+    timeout { send_user "\n>>> T2c TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+# ============================================================
+send_user "\n\n========== TEST 3: Ctrl+C (SKIPPED - known broken) ==========\n"
+send_user ">>> Will test signal setup instead <<<\n"
+send "kill -l 2>&1 | head -5\r"
+expect -re {(%|#)\s*$}
+
+# Check stty settings
+send "stty -a 2>&1\r"
+expect {
+    -re {(%|#)\s*$} { send_user "\n>>> T3 stty output captured <<<\n" }
+    timeout { send_user "\n>>> T3 stty TIMEOUT <<<\n" }
+}
+
+# ============================================================
+send_user "\n\n========== TEST 4: /dev/null ==========\n"
+send "ls -la /dev/null 2>&1\r"
+expect {
+    -re {/dev/null} { send_user "\n>>> T4a /dev/null exists <<<\n" }
+    -re {No such file} { send_user "\n>>> T4a FAIL: /dev/null MISSING <<<\n" }
+    timeout { send_user "\n>>> T4a TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+send "ls /dev/ 2>&1\r"
+expect -re {(%|#)\s*$}
+
+send "ls > /dev/null 2>&1 && echo DEVNULL_OK || echo DEVNULL_FAIL\r"
+expect {
+    -re {DEVNULL_OK} { send_user "\n>>> T4c PASS: redirect to /dev/null works <<<\n" }
+    -re {DEVNULL_FAIL} { send_user "\n>>> T4c FAIL <<<\n" }
+    timeout { send_user "\n>>> T4c TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+# Check for /dev/zero and /dev/random too
+send "ls -la /dev/zero /dev/random 2>&1\r"
+expect -re {(%|#)\s*$}
+
+# ============================================================
+send_user "\n\n========== TEST 5: Globbing ==========\n"
+send "ls /bin/z* 2>&1\r"
+expect {
+    -re {/bin/zsh} { send_user "\n>>> T5 PASS: globbing works <<<\n" }
+    -re {no matches} { send_user "\n>>> T5 FAIL: no glob matches <<<\n" }
+    timeout { send_user "\n>>> T5 TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+# ============================================================
+send_user "\n\n========== TEST 6: Coreutils traces ==========\n"
+send "whoami 2>&1\r"
+expect {
+    -re {main enter|argc=|debug|trace} { send_user "\n>>> T6a FAIL: debug traces in whoami <<<\n" }
+    -re {root} { send_user "\n>>> T6a whoami=root <<<\n" }
+    timeout { send_user "\n>>> T6a TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+send "id 2>&1\r"
+expect {
+    -re {main enter|argc=|debug|trace} { send_user "\n>>> T6b FAIL: debug traces in id <<<\n" }
+    -re {uid=} { send_user "\n>>> T6b id output OK <<<\n" }
+    timeout { send_user "\n>>> T6b TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+# ============================================================
+send_user "\n\n========== TEST 7: Command substitution ==========\n"
+send "echo \"I am \$(whoami)\"\r"
+expect {
+    -re {I am root} { send_user "\n>>> T7 PASS: command substitution works <<<\n" }
+    -re {I am \$} { send_user "\n>>> T7 FAIL: literal dollar sign <<<\n" }
+    -re {I am } { send_user "\n>>> T7 PARTIAL: 'I am' but not 'root' <<<\n" }
+    timeout { send_user "\n>>> T7 TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+# ============================================================
+send_user "\n\n========== TEST 8: Background jobs ==========\n"
+send "sleep 10 &\r"
+expect {
+    -re {(%|#)\s*$} { send_user "\n>>> T8a got prompt after bg <<<\n" }
+    timeout { send_user "\n>>> T8a TIMEOUT (bg didn't return prompt) <<<\n" }
+}
+sleep 1
+
+send "jobs 2>&1\r"
+expect {
+    -re {sleep} { send_user "\n>>> T8b PASS: sleep in jobs list <<<\n" }
+    -re {(%|#)\s*$} { send_user "\n>>> T8b FAIL: jobs empty <<<\n" }
+    timeout { send_user "\n>>> T8b TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+# ============================================================
+send_user "\n\n========== ALL TESTS COMPLETE ==========\n"
+send "echo TESTS_DONE\r"
+expect -re {TESTS_DONE}
+sleep 1
+
+# Quit QEMU via monitor (Ctrl-A x)
+send "\x01"
+sleep 0.5
+send "x"
+sleep 2
+exit 0

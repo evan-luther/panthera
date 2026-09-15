@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PANTHERA_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SYSROOT="${PANTHERA_ROOT}/userland/libsystem/build/sysroot"
+CC="${CC:-$(xcrun -find clang)}"
+TARGET="${TARGET:-x86_64-apple-darwin23.0}"
+MINVER="${MINVER:-14.0}"
+
+"${CC}" \
+  -target "${TARGET}" \
+  -mmacosx-version-min="${MINVER}" \
+  -isysroot "${SYSROOT}" \
+  -I"${PANTHERA_ROOT}/userland/libarchive/include" \
+  -O2 \
+  -Wall \
+  -Wextra \
+  "${SCRIPT_DIR}/pkgsrc_extract_detail_probe.c" \
+  -o "${SCRIPT_DIR}/pkgsrc_extract_detail_probe" \
+  -L"${SYSROOT}/usr/lib" \
+  -L"${SYSROOT}/usr/lib/system" \
+  -Wl,-not_for_dyld_shared_cache \
+  -larchive \
+  -lSystem
+
+echo "Built ${SCRIPT_DIR}/pkgsrc_extract_detail_probe"

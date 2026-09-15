@@ -1,0 +1,6 @@
+#ifndef PANTHERA_FORWARD_IOKIT_USB_IOUSBCONTROLLER_H
+#define PANTHERA_FORWARD_IOKIT_USB_IOUSBCONTROLLER_H
+
+#include "../../../../src/IOUSBFamily-630.4.5/IOUSBFamily/Headers/IOUSBController.h"
+
+#endif

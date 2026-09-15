@@ -1,0 +1,1620 @@
+diff --git a/lib/libzutil/zutil_import.c b/lib/libzutil/zutil_import.c
+index 000000000..000000000 100644
+--- a/lib/libzutil/zutil_import.c
++++ b/lib/libzutil/zutil_import.c
+@@ -1284,6 +1284,23 @@ zpool_find_import_scan_add_slice(libpc_handle_t *hdl, pthread_mutex_t *lock,
+ 	pthread_mutex_unlock(lock);
+ }
+ 
++#ifdef __APPLE__
++static boolean_t
++zpool_find_import_macos_dev_candidate(const char *path, const char *name)
++{
++	if (strcmp(path, "/dev") != 0)
++		return (B_TRUE);
++
++	if (strncmp(name, "disk", 4) == 0)
++		return (B_TRUE);
++
++	if (strncmp(name, "rdisk", 5) == 0)
++		return (B_TRUE);
++
++	return (B_FALSE);
++}
++#endif
++
+ static int
+ zpool_find_import_scan_dir(libpc_handle_t *hdl, pthread_mutex_t *lock,
+     avl_tree_t *cache, const char *dir, int order)
+@@ -1338,6 +1357,11 @@ zpool_find_import_scan_dir(libpc_handle_t *hdl, pthread_mutex_t *lock,
+ 			continue;
+ 		}
+ 
++#ifdef __APPLE__
++		if (!zpool_find_import_macos_dev_candidate(path, name))
++			continue;
++#endif
++
+ 		zpool_find_import_scan_add_slice(hdl, lock, cache, path, name,
+ 		    order);
+ 	}
+diff --git a/lib/libzutil/zutil_nicenum.c b/lib/libzutil/zutil_nicenum.c
+index 000000000..000000000 100644
+--- a/lib/libzutil/zutil_nicenum.c
++++ b/lib/libzutil/zutil_nicenum.c
+@@ -57,6 +57,17 @@
+ /*
+  * Convert a number to an appropriately human-readable output.
+  */
++static uint64_t
++zfs_nicenum_scale(uint64_t base, int index)
++{
++	uint64_t scale = 1;
++
++	while (index-- > 0)
++		scale *= base;
++
++	return (scale);
++}
++
+ void
+ zfs_nicenum_format(uint64_t num, char *buf, size_t buflen,
+     enum zfs_nicenum_format format)
+@@ -101,8 +112,8 @@ zfs_nicenum_format(uint64_t num, char *buf, size_t buflen,
+ 	/* Don't print zero latencies since they're invalid */
+ 	if ((format == ZFS_NICENUM_TIME) && (num == 0)) {
+ 		(void) snprintf(buf, buflen, "-");
+-	} else if ((index == 0) || ((num %
+-	    (uint64_t)powl(k_unit[format], index)) == 0)) {
++	} else if ((index == 0) ||
++	    ((num % zfs_nicenum_scale(k_unit[format], index)) == 0)) {
+ 		/*
+ 		 * If this is an even multiple of the base, always display
+ 		 * without any decimal precision.
+@@ -122,7 +133,7 @@ zfs_nicenum_format(uint64_t num, char *buf, size_t buflen,
+ 		int i;
+ 		for (i = 2; i >= 0; i--) {
+ 			val = (double)num /
+-			    (uint64_t)powl(k_unit[format], index);
++			    zfs_nicenum_scale(k_unit[format], index);
+ 
+ 			/*
+ 			 * Don't print floating point values for time.  Note,
+diff --git a/lib/libtpool/thread_pool.c b/lib/libtpool/thread_pool.c
+index 000000000..000000000 100644
+--- a/lib/libtpool/thread_pool.c
++++ b/lib/libtpool/thread_pool.c
+@@ -422,6 +422,13 @@ tpool_dispatch(tpool_t *tpool, void (*func)(void *), void *arg)
+ 	job->tpj_arg = arg;
+ 
+ 	pthread_mutex_lock(&tpool->tp_mutex);
++
++	if (tpool->tp_head == NULL)
++		tpool->tp_head = job;
++	else
++		tpool->tp_tail->tpj_next = job;
++	tpool->tp_tail = job;
++	tpool->tp_njobs++;
+ 
+ 	if (!(tpool->tp_flags & TP_SUSPEND)) {
+ 		if (tpool->tp_idle > 0)
+@@ -436,6 +443,12 @@ tpool_dispatch(tpool_t *tpool, void (*func)(void *), void *arg)
+ 				/* Leave task on queue */
+ 			} else {
+ 				/* Cannot start a single worker! */
++				if (tpool->tp_head == job) {
++					tpool->tp_head = job->tpj_next;
++					if (tpool->tp_tail == job)
++						tpool->tp_tail = NULL;
++					tpool->tp_njobs--;
++				}
+ 				pthread_mutex_unlock(&tpool->tp_mutex);
+ 				free(job);
+ 				return (-1);
+@@ -443,13 +456,6 @@ tpool_dispatch(tpool_t *tpool, void (*func)(void *), void *arg)
+ 		}
+ 	}
+ 
+-	if (tpool->tp_head == NULL)
+-		tpool->tp_head = job;
+-	else
+-		tpool->tp_tail->tpj_next = job;
+-	tpool->tp_tail = job;
+-	tpool->tp_njobs++;
+-
+ 	pthread_mutex_unlock(&tpool->tp_mutex);
+ 	return (0);
+ }
+diff --git a/module/os/macos/zfs/zfs_boot.cpp b/module/os/macos/zfs/zfs_boot.cpp
+index 000000000..000000000 100644
+--- a/module/os/macos/zfs/zfs_boot.cpp
++++ b/module/os/macos/zfs/zfs_boot.cpp
+@@ -1215,12 +1215,11 @@ out:
+ DSTATIC bool
+ zfs_boot_probe_disk(pool_list_t *pools, IOMedia *media)
+ {
+-	OSString *ospath, *uuid;
++	OSString *ospath;
+ 	char *path = 0;
+ 	const char *pname;
+-	const char prefix[] = "/private/var/run/disk/by-id/media-";
+ 	uint64_t this_guid;
+ 	int num_labels, err, len = 0;
+ 	nvlist_t *config;
+ 	boolean_t matched = B_FALSE;
+ 
+@@ -1246,43 +1245,31 @@ zfs_boot_probe_disk(pool_list_t *pools, IOMedia *media)
+ 		return (false);
+ 	}
+ 
+-	/* Try to get a UUID from the media */
+-	uuid = OSDynamicCast(OSString, media->getProperty(kIOMediaUUIDKey));
+-	if (uuid && uuid->getLength() != 0) {
+-		/* Allocate room for prefix, UUID, and null terminator */
+-		len = (strlen(prefix) + uuid->getLength()) + 1;
+-
+-		path = (char *)kmem_alloc(len, KM_SLEEP);
+-		if (!path) {
+-			dprintf("%s couldn't allocate path\n", __func__);
+-			return (false);
+-		}
+-
+-		snprintf(path, len, "%s%s", prefix, uuid->getCStringNoCopy());
+-		uuid = 0;
+-	} else {
+-		/* Get the BSD name as a C string */
+-		ospath = OSDynamicCast(OSString, media->getProperty(
+-		    kIOBSDNameKey, gIOServicePlane,
+-		    kIORegistryIterateRecursively));
+-		if (!ospath || (ospath->getLength() == 0)) {
+-			dprintf("%s skipping device with no bsd disk node\n",
+-			    __func__);
+-			return (false);
+-		}
+-
+-		/* Allocate room for "/dev/" + "diskNsN" + '\0' */
+-		len = (strlen("/dev/") + ospath->getLength() + 1);
+-		path = (char *)kmem_alloc(len, KM_SLEEP);
+-		if (!path) {
+-			dprintf("%s couldn't allocate path\n", __func__);
+-			return (false);
+-		}
+-
+-		/* "/dev/" is 5 characters, plus null character */
+-		snprintf(path, len, "/dev/%s", ospath->getCStringNoCopy());
+-		ospath = 0;
+-	}
++	/*
++	 * Root-pool import runs before userland can publish invariant disk
++	 * symlinks under /private/var/run/disk.  Use the IOMedia BSD node
++	 * directly so spa_import() can open the vdev during mountroot.
++	 */
++	ospath = OSDynamicCast(OSString, media->getProperty(
++	    kIOBSDNameKey, gIOServicePlane,
++	    kIORegistryIterateRecursively));
++	if (!ospath || (ospath->getLength() == 0)) {
++		dprintf("%s skipping device with no bsd disk node\n",
++		    __func__);
++		return (false);
++	}
++
++	/* Allocate room for "/dev/" + "diskNsN" + '\0' */
++	len = (strlen("/dev/") + ospath->getLength() + 1);
++	path = (char *)kmem_alloc(len, KM_SLEEP);
++	if (!path) {
++		dprintf("%s couldn't allocate path\n", __func__);
++		return (false);
++	}
++
++	/* "/dev/" is 5 characters, plus null character */
++	snprintf(path, len, "/dev/%s", ospath->getCStringNoCopy());
++	ospath = 0;
+ 	dprintf("%s path [%s]\n", __func__, (path ? path : ""));
+ 
+ 	/* Read vdev labels, if any */
+@@ -1323,8 +1310,8 @@ zfs_boot_probe_disk(pool_list_t *pools, IOMedia *media)
+ 
+ 	/*
+ 	 * Add this config to the pool list.
+-	 * Always assigns order 1 since all disks are
+-	 * referenced by /private/var/run/disk/by-id/ paths.
++	 * Always assigns order 1 since boot import receives devices directly
++	 * from IOMedia notifications rather than a userland import path scan.
+ 	 */
+	dprintf("%s: add_config %s\n", __func__, path);
+	if (zfs_boot_add_config(pools, path, 1,
+diff --git a/module/os/macos/zfs/zfs_boot.cpp b/module/os/macos/zfs/zfs_boot.cpp
+index 000000000..000000000 100644
+--- a/module/os/macos/zfs/zfs_boot.cpp
++++ b/module/os/macos/zfs/zfs_boot.cpp
+@@ -1211,7 +1211,44 @@ zfs_boot_probe_media(void* target, void* refCon,
+ 	media = 0;
+ 	return (true);
+ }
++
++DSTATIC void
++zfs_boot_seed_existing_media(IOService *zfs_hl, pool_list_t *pools)
++{
++	OSDictionary *matching = NULL;
++	OSIterator *iter = NULL;
++	OSObject *obj = NULL;
++	IOService *service = NULL;
++
++	if (!zfs_hl || !pools)
++		return;
++
++	matching = IOService::serviceMatching("IOMedia");
++	if (!matching) {
++		printf("%s: no IOMedia matching dictionary\n",
++		    __func__);
++		return;
++	}
+ 
++	iter = IOService::getMatchingServices(matching);
++	matching->release();
++	matching = NULL;
++	if (!iter) {
++		printf("%s: no existing IOMedia iterator\n",
++		    __func__);
++		return;
++	}
++
++	while ((obj = iter->getNextObject()) != NULL) {
++		service = OSDynamicCast(IOService, obj);
++		if (!service)
++			continue;
++		(void) zfs_boot_probe_media(zfs_hl, pools, service, NULL);
++	}
++
++	iter->release();
++}
++
+ DSTATIC bool
+ zfs_boot_probe_disk(pool_list_t *pools, IOMedia *media)
+ {
+@@ -2136,6 +2173,14 @@ zfs_boot_init(IOService *zfs_hl)
+ 		goto error;
+ 	}
+ 	pools->notifier = notifier;
++
++	/*
++	 * The root IOMedia can be published before zfs.kext reaches this point,
++	 * especially after slow dirty-import or metadata-heavy boots. Seed the
++	 * import queue from currently published media as well as listening for
++	 * future publish notifications.
++	 */
++	zfs_boot_seed_existing_media(zfs_hl, pools);
+ 
+ 	/* Finally, start the import thread */
+ 	VERIFY3U(taskq_dispatch(zfs_boot_taskq, zfs_boot_import_thread,
+diff --git a/module/os/macos/zfs/zfs_boot.cpp b/module/os/macos/zfs/zfs_boot.cpp
+index 000000000..000000000 100644
+--- a/module/os/macos/zfs/zfs_boot.cpp
++++ b/module/os/macos/zfs/zfs_boot.cpp
+@@ -1152,8 +1152,10 @@ zfs_boot_probe_media(void* target, void* refCon,
+ 		return (false);
+ 	}
+ 
+-	/* Get the parent IOMedia device */
+-	media = OSDynamicCast(IOMedia, newService->getProvider());
++	/* Get the IOMedia device, or the parent when notified via BSD client. */
++	media = OSDynamicCast(IOMedia, newService);
++	if (!media)
++		media = OSDynamicCast(IOMedia, newService->getProvider());
+ 
+ 	if (!media) {
+ 		dprintf("%s couldn't be cast as IOMedia\n",
+@@ -2127,9 +2129,8 @@ zfs_boot_init(IOService *zfs_hl)
+ 	pools->terminating = ZFS_BOOT_ACTIVE;
+ 
+ 	notifier = IOService::addMatchingNotification(
+-	    gIOFirstPublishNotification, IOService::serviceMatching(
+-	    "IOMediaBSDClient"), zfs_boot_probe_media,
+-	    zfs_hl, pools, 0);
++	    gIOFirstPublishNotification, IOService::serviceMatching("IOMedia"),
++	    zfs_boot_probe_media, zfs_hl, pools, 0);
+ 
+ 	if (!notifier) {
+ 		/* Fail if memory couldn't be allocated */
+diff --git a/module/os/macos/zfs/zfs_boot.cpp b/module/os/macos/zfs/zfs_boot.cpp
+index 000000000..000000000 100644
+--- a/module/os/macos/zfs/zfs_boot.cpp
++++ b/module/os/macos/zfs/zfs_boot.cpp
+@@ -1161,8 +1163,7 @@ zfs_boot_probe_media(void* target, void* refCon,
+ 
+ 	isLeaf = media->getProperty(kIOMediaLeafKey);
+ 	if (!isLeaf) {
+-		dprintf("%s skipping non-leaf\n", __func__);
+-		goto out;
++		dprintf("%s probing media without leaf property\n", __func__);
+ 	}
+ 
+ 	mediaSize = media->getSize();
+diff --git a/include/os/macos/zfs/sys/zfs_boot.h b/include/os/macos/zfs/sys/zfs_boot.h
+index 000000000..000000000 100644
+--- a/include/os/macos/zfs/sys/zfs_boot.h
++++ b/include/os/macos/zfs/sys/zfs_boot.h
+@@ -30,6 +30,7 @@ extern "C" {
+ 
+ /* Link data vdevs to virtual devices */
+ int zfs_boot_update_bootinfo(spa_t *spa);
++void zfs_boot_retry_import(void);
+ 
+ int zfs_attach_devicedisk(zfsvfs_t *zfsvfs);
+ int zfs_detach_devicedisk(zfsvfs_t *zfsvfs);
+diff --git a/module/os/macos/zfs/zfs_boot.cpp b/module/os/macos/zfs/zfs_boot.cpp
+index 000000000..000000000 100644
+--- a/module/os/macos/zfs/zfs_boot.cpp
++++ b/module/os/macos/zfs/zfs_boot.cpp
+@@ -1246,6 +1246,20 @@ zfs_boot_seed_existing_media(IOService *zfs_hl, pool_list_t *pools)
+ 	iter->release();
+ }
+ 
++extern "C" void
++zfs_boot_retry_import(void)
++{
++	pool_list_t *pools = zfs_boot_pool_list;
++
++	if (!pools || pools->terminating != ZFS_BOOT_ACTIVE)
++		return;
++
++	zfs_boot_seed_existing_media(pools->zfs_hl, pools);
++	mutex_enter(&pools->lock);
++	cv_signal(&pools->cv);
++	mutex_exit(&pools->lock);
++}
++
+ DSTATIC bool
+ zfs_boot_probe_disk(pool_list_t *pools, IOMedia *media)
+ {
+diff --git a/module/os/macos/zfs/zfs_vfsops.c b/module/os/macos/zfs/zfs_vfsops.c
+index 000000000..000000000 100644
+--- a/module/os/macos/zfs/zfs_vfsops.c
++++ b/module/os/macos/zfs/zfs_vfsops.c
+@@ -45,6 +45,7 @@
+ #include <sys/dsl_dir.h>
+ #include <sys/dataset_kstats.h>
+ #include <sys/spa_impl.h> // spa_freeze_txg
++#include <sys/zfs_boot.h>
+ 
+ #define	vfs_optionisset(X, Y, Z) (vfs_flags(X)&(Y))
+ 
+@@ -1247,14 +1248,21 @@ zfs_vfs_mountroot(struct mount *mp, struct vnode *devvp, vfs_context_t ctx)
+ 		return (ENOMEM);
+ 	}
+ 
+-	mutex_enter(&spa_namespace_lock);
+-	spa = spa_next(NULL);
++	for (int i = 0; i < 120; i++) {
++		mutex_enter(&spa_namespace_lock);
++		spa = spa_next(NULL);
++		if (spa)
++			break;
++		mutex_exit(&spa_namespace_lock);
++
++		zfs_boot_retry_import();
++		delay(hz >> 1);
++	}
++
+ 	if (!spa) {
+-		mutex_exit(&spa_namespace_lock);
+-		cmn_err(CE_NOTE, "%s: no pool available",
+-		    __func__);
++		cmn_err(CE_NOTE, "%s: no pool available", __func__);
+ 		goto out;
+ 	}
+ 
+ 	error = dsl_dsobj_to_dsname(spa_name(spa),
+ 	    spa_bootfs(spa), zfs_bootfs);
+diff --git a/module/os/macos/zfs/ldi_iokit.cpp b/module/os/macos/zfs/ldi_iokit.cpp
+index 000000000..000000000 100644
+--- a/module/os/macos/zfs/ldi_iokit.cpp
++++ b/module/os/macos/zfs/ldi_iokit.cpp
+@@ -317,11 +317,21 @@ handle_open_iokit(struct ldi_handle *lhp, IOMedia *media)
+ 		media->release();
+ 		return (EPERM);
+ 	}
++
++	/*
++	 * Writable ZFS vdev opens share the storage stack with IOKit's BSD
++	 * media client and partition scheme during root mount.  Request the
++	 * same shared writer access those Darwin storage clients use when
++	 * multiplexing opens down to the provider; an exclusive writer open can
++	 * try to tear down the active storage driver and fail during mountroot.
++	 */
++	IOStorageAccess access = kIOStorageAccessReader;
++	if (lhp->lh_fmode & FWRITE)
++		access = (IOStorageAccess)(kIOStorageAccessReaderWriter |
++		    kIOStorageAccessSharedLock);
+ 
+ 	/* Call open with the IOService client handle */
+-	if (media->IOMedia::open(LH_CLIENT(lhp), 0,
+-	    (lhp->lh_fmode & FWRITE ?  kIOStorageAccessReaderWriter :
+-	    kIOStorageAccessReader)) == false) {
++	if (media->IOMedia::open(LH_CLIENT(lhp), 0, access) == false) {
+ 		dprintf("%s IOMedia->open failed\n", __func__);
+ 		media->release();
+ 		return (EIO);
+diff --git a/module/os/macos/spl/spl-cred.c b/module/os/macos/spl/spl-cred.c
+index 000000000..000000000 100644
+--- a/module/os/macos/spl/spl-cred.c
++++ b/module/os/macos/spl/spl-cred.c
+@@ -101,10 +101,7 @@ crgetfsgid(const cred_t *cr)
+ 	return (-1);
+ }
+ 
+-
+-extern int kauth_cred_getgroups(kauth_cred_t _cred, gid_t *_groups,
+-    int *_groupcount);
+ /*
+  * Unfortunately, to get the count of groups, we have to call XNU which
+  * memcpy's them over. No real clean way to get around that, but at least
+ 
+diff --git a/module/os/macos/spl/spl-kstat.c b/module/os/macos/spl/spl-kstat.c
+index 000000000..000000000 100644
+--- a/module/os/macos/spl/spl-kstat.c
++++ b/module/os/macos/spl/spl-kstat.c
+@@ -48,6 +48,12 @@
+ SYSCTL_DECL(_kstat);
+ SYSCTL_NODE(, OID_AUTO, kstat, CTLFLAG_RW, 0, "kstat tree");
+ 
++static void
++spl_sysctl_register_oid(struct sysctl_oid *oid)
++{
++	sysctl_register_oid_early_kext(oid);
++}
++
+ /*
+  * Sysctl node tree structure.
+  *
+@@ -324,7 +330,7 @@
+ 	node->tn_oid.oid_fmt = "N";
+ 	node->tn_oid.oid_arg1 = (void*)(&node->tn_children);
+ 
+-	sysctl_register_oid(&node->tn_oid);
++	spl_sysctl_register_oid(&node->tn_oid);
+ 
+ 	node->tn_next = tree_nodes;
+ 	tree_nodes = node;
+@@ -842,7 +848,7 @@
+ 		ksp->ks_data    = (void *)kmem_zalloc(
+ 		    ksp->ks_data_size, KM_SLEEP);
+ 
+-	sysctl_register_oid(&e->e_oid);
++	spl_sysctl_register_oid(&e->e_oid);
+ 
+ 	return (ksp);
+ }
+@@ -979,7 +985,7 @@
+ 			 * no issues initialising it.
+ 			 */
+ 			if (oid_valid) {
+-				sysctl_register_oid(&val->l_oid);
++				spl_sysctl_register_oid(&val->l_oid);
+ 				val->l_oid_registered = 1;
+ 			} else {
+ 				val->l_oid_registered = 0;
+@@ -1012,7 +1018,7 @@
+ 			    CTLFLAG_RD | CTLFLAG_OID2;
+ 			val->l_oid.oid_fmt = "A";
+ 			val->l_oid.oid_arg1 = (void *) ksp;
+-			sysctl_register_oid(&val->l_oid);
++			spl_sysctl_register_oid(&val->l_oid);
+ 		} else {
+ 			val->l_oid.oid_handler =
+ 			    kstat_handle_raw;
+@@ -1020,7 +1026,7 @@
+ 			    CTLFLAG_RD | CTLFLAG_OID2;
+ 			val->l_oid.oid_fmt = "";
+ 			val->l_oid.oid_arg1 = (void *) ksp;
+-			sysctl_register_oid(&val->l_oid);
++			spl_sysctl_register_oid(&val->l_oid);
+ 		}
+ 		val->l_oid_registered = 1;
+ 
+@@ -1045,7 +1051,7 @@
+ 		val->l_oid.oid_fmt = "Q";
+ 		/* Somewhat gross, using arg2 as the variable */
+ 		val->l_oid.oid_arg1 = &val->l_oid.oid_arg2;
+-		sysctl_register_oid(&val->l_oid);
++		spl_sysctl_register_oid(&val->l_oid);
+ 		val->l_oid_registered = 1;
+ 
+ 	} else if (ksp->ks_type == KSTAT_TYPE_IO) {
+@@ -1072,7 +1078,7 @@
+ 		    CTLFLAG_RD | CTLFLAG_OID2;
+ 		val->l_oid.oid_fmt = "A";
+ 		val->l_oid.oid_arg1 = (void *) ksp;
+-		sysctl_register_oid(&val->l_oid);
++		spl_sysctl_register_oid(&val->l_oid);
+ 		val->l_oid_registered = 1;
+ 	}
+ 
+@@ -1252,7 +1258,7 @@
+ 	/*
+ 	 * Create the kstat root OID
+ 	 */
+-	sysctl_register_oid(&sysctl__kstat);
++	spl_sysctl_register_oid(&sysctl__kstat);
+ }
+ 
+ void
+diff --git a/include/os/macos/spl/sys/mod_os.h b/include/os/macos/spl/sys/mod_os.h
+index 000000000..000000000 100644
+--- a/include/os/macos/spl/sys/mod_os.h
++++ b/include/os/macos/spl/sys/mod_os.h
+@@ -120,7 +120,7 @@
+ 	__attribute__((constructor)) void \
+ 	    _zcnst_sysctl__tunable_ ## scope_prefix ## _ ## name (void) \
+ 	{ \
+-		sysctl_register_oid(&sysctl__tunable_ ## scope_prefix ## _ ## name ); \
++		sysctl_register_oid_early_kext(&sysctl__tunable_ ## scope_prefix ## _ ## name ); \
+ 	} \
+ 	__attribute__((destructor)) void \
+ 	    _zdest_sysctl__tunable_ ## scope_prefix ## _ ## name (void) \
+@@ -139,7 +139,7 @@
+ 	__attribute__((constructor)) void	\
+ 	_zcnst_sysctl__tunable ## scope ## _ ## name (void)	\
+ 	{		\
+-		sysctl_register_oid(&sysctl__tunable ## scope ## _ ## name );	\
++		sysctl_register_oid_early_kext(&sysctl__tunable ## scope ## _ ## name );	\
+ 	}		\
+ 	__attribute__((destructor)) void		\
+ 	_zdest_sysctl__tunable ## scope ## _ ## name (void)	\
+@@ -154,7 +154,7 @@
+ 	__attribute__((constructor)) void \
+ 	    _zcnst_sysctl_ ## parent ## _ ## name (void) \
+ 	{ \
+-		sysctl_register_oid(&sysctl_## parent ## _ ## name ); \
++		sysctl_register_oid_early_kext(&sysctl_## parent ## _ ## name ); \
+ 	} \
+ 	__attribute__((destructor)) void \
+ 	    _zdest_sysctl_ ## parent ## _ ## name (void) \
+diff --git a/module/os/macos/zfs/zfs_osx.cpp b/module/os/macos/zfs/zfs_osx.cpp
+index 000000000..000000000 100644
+--- a/module/os/macos/zfs/zfs_osx.cpp
++++ b/module/os/macos/zfs/zfs_osx.cpp
+@@ -236,8 +236,8 @@ org_openzfsonosx_zfs_zvol::start(IOService *provider)
+ 	}
+ 
+ 	/* Register ZFS KEXT Version sysctl - separate to kstats */
+-	sysctl_register_oid(&sysctl__zfs);
+-	sysctl_register_oid(&sysctl__zfs_kext_version);
++	sysctl_register_oid_early_kext(&sysctl__zfs);
++	sysctl_register_oid_early_kext(&sysctl__zfs_kext_version);
+ 
+ 	/* Init LDI */
+ 	int error = 0;
+diff --git a/module/os/macos/zfs/sysctl_os.c b/module/os/macos/zfs/sysctl_os.c
+index 000000000..000000000 100644
+--- a/module/os/macos/zfs/sysctl_os.c
++++ b/module/os/macos/zfs/sysctl_os.c
+@@ -164,6 +164,12 @@ SYSCTL_NODE(_tunable_zfs_vdev, OID_AUTO, file, CTLFLAG_RW, 0, "ZFS VDEV file");
+ SYSCTL_NODE(_tunable_zfs_vdev, OID_AUTO, mirror, CTLFLAG_RD, 0,
+     "ZFS VDEV mirror");
+ 
++static void
++zfs_sysctl_register_oid(struct sysctl_oid *oid)
++{
++	sysctl_register_oid_early_kext(oid);
++}
++
+ void sysctl_os_init(void)
+ {
+ 	/* Ask spl-kstat.c for (parent of) "tunable" sysctl node to attach to */
+@@ -172,38 +179,38 @@ void sysctl_os_init(void)
+ 	if (parent != NULL)
+ 		sysctl__tunable.oid_parent = parent;
+ 
+-	sysctl_register_oid(&sysctl__tunable);
+-	sysctl_register_oid(&sysctl__tunable_zfs);
+-
+-	sysctl_register_oid(&sysctl__tunable_zfs_arc);
+-	sysctl_register_oid(&sysctl__tunable_zfs_brt);
+-	sysctl_register_oid(&sysctl__tunable_zfs_condense);
+-	sysctl_register_oid(&sysctl__tunable_zfs_dbuf);
+-	sysctl_register_oid(&sysctl__tunable_zfs_dbuf_cache);
+-	sysctl_register_oid(&sysctl__tunable_zfs_deadman);
+-	sysctl_register_oid(&sysctl__tunable_zfs_dedup);
+-	sysctl_register_oid(&sysctl__tunable_zfs_l2arc);
+-	sysctl_register_oid(&sysctl__tunable_zfs_livelist);
+-	sysctl_register_oid(&sysctl__tunable_zfs_lua);
+-	sysctl_register_oid(&sysctl__tunable_zfs_metaslab);
+-	sysctl_register_oid(&sysctl__tunable_zfs_mg);
+-	sysctl_register_oid(&sysctl__tunable_zfs_multihost);
+-	sysctl_register_oid(&sysctl__tunable_zfs_prefetch);
+-	sysctl_register_oid(&sysctl__tunable_zfs_reconstruct);
+-	sysctl_register_oid(&sysctl__tunable_zfs_recv);
+-	sysctl_register_oid(&sysctl__tunable_zfs_send);
+-	sysctl_register_oid(&sysctl__tunable_zfs_spa);
+-	sysctl_register_oid(&sysctl__tunable_zfs_trim);
+-	sysctl_register_oid(&sysctl__tunable_zfs_txg);
+-	sysctl_register_oid(&sysctl__tunable_zfs_vdev);
+-	sysctl_register_oid(&sysctl__tunable_zfs_vnops);
+-	sysctl_register_oid(&sysctl__tunable_zfs_zevent);
+-	sysctl_register_oid(&sysctl__tunable_zfs_zil);
+-	sysctl_register_oid(&sysctl__tunable_zfs_zio);
+-	sysctl_register_oid(&sysctl__tunable_zfs_livelist_condense);
+-	sysctl_register_oid(&sysctl__tunable_zfs_vdev_cache);
+-	sysctl_register_oid(&sysctl__tunable_zfs_vdev_file);
+-	sysctl_register_oid(&sysctl__tunable_zfs_vdev_mirror);
++	zfs_sysctl_register_oid(&sysctl__tunable);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs);
++
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_arc);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_brt);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_condense);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_dbuf);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_dbuf_cache);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_deadman);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_dedup);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_l2arc);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_livelist);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_lua);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_metaslab);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_mg);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_multihost);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_prefetch);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_reconstruct);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_recv);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_send);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_spa);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_trim);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_txg);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_vdev);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_vnops);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_zevent);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_zil);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_zio);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_livelist_condense);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_vdev_cache);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_vdev_file);
++	zfs_sysctl_register_oid(&sysctl__tunable_zfs_vdev_mirror);
+ }
+ 
+ void sysctl_os_fini(void)
+diff --git a/include/os/macos/spl/sys/debug.h b/include/os/macos/spl/sys/debug.h
+index 000000000..000000000 100644
+--- a/include/os/macos/spl/sys/debug.h
++++ b/include/os/macos/spl/sys/debug.h
+@@ -59,12 +59,22 @@
+ extern "C" {
+ #endif
+ 
++#ifdef PANTHERA_SPL_KEXT
++extern int spl_debug_flags;
++#else
+ extern int zfs_flags;
++#endif
+ 
+ /* Simple dprintf for SPL only */
+ #ifndef dprintf
++#ifdef PANTHERA_SPL_KEXT
++#define	dprintf(...)   \
++	if (spl_debug_flags & 1) \
++		printf(__VA_ARGS__)
++#else
+ #define	dprintf(...)   \
+ 	if (zfs_flags & 1) \
+ 		printf(__VA_ARGS__)
++#endif
+ #endif
+ 
+diff --git a/module/os/macos/spl/spl-err.c b/module/os/macos/spl/spl-err.c
+index 000000000..000000000 100644
+--- a/module/os/macos/spl/spl-err.c
++++ b/module/os/macos/spl/spl-err.c
+@@ -28,6 +28,8 @@
+ 
+ void IOSleep(int);
+ 
++int spl_debug_flags = 0;
++
+ void
+ vcmn_err(int ce, const char *fmt, va_list ap)
+ {
+diff --git a/module/os/macos/spl/spl-kmem.c b/module/os/macos/spl/spl-kmem.c
+index 000000000..000000000 100644
+--- a/module/os/macos/spl/spl-kmem.c
++++ b/module/os/macos/spl/spl-kmem.c
+@@ -82,7 +82,21 @@ static uint64_t spl_manual_memory_cap = 0;
+ static uint64_t spl_memory_cap_enforcements = 0;
+ 
+ extern void spl_set_arc_no_grow(int);
++static void (*spl_arc_no_grow_callback)(int);
+ 
++void
++spl_register_arc_no_grow_callback(void (*callback)(int))
++{
++	spl_arc_no_grow_callback = callback;
++}
++
++void
++spl_set_arc_no_grow(int value)
++{
++	if (spl_arc_no_grow_callback != NULL)
++		spl_arc_no_grow_callback(value);
++}
++
+ /*
+  * variables informed by "pure"  mach_vm_pressure interface
+  *
+@@ -526,7 +540,7 @@ uint64_t kmem_free_to_slab_when_fragmented = 0;
+ 
+ /* stack splitting via thread_call (vmem_alloc) or taskq (vdev_disk) */
+-extern _Atomic unsigned int spl_lowest_vdev_disk_stack_remaining;
+-extern _Atomic unsigned int spl_lowest_zvol_stack_remaining;
++static _Atomic unsigned int spl_lowest_vdev_disk_stack_remaining = (unsigned int)-1;
++static _Atomic unsigned int spl_lowest_zvol_stack_remaining = (unsigned int)-1;
+ extern _Atomic unsigned int spl_lowest_alloc_stack_remaining;
+ extern unsigned int spl_split_stack_below;
+ 
+diff --git a/module/os/macos/spl/spl-osx.c b/module/os/macos/spl/spl-osx.c
+index 000000000..000000000 100644
+--- a/module/os/macos/spl/spl-osx.c
++++ b/module/os/macos/spl/spl-osx.c
+@@ -309,7 +309,7 @@ panic_print_kmod_symbol_name(vm_address_t search)
+ 
+ 
+ static void
+-panic_print_symbol_name(vm_address_t search)
++spl_panic_print_symbol_name(vm_address_t search)
+ {
+ 	/* try searching in the kernel */
+ #if 0
+@@ -357,7 +357,7 @@ spl_backtrace(char *thesignal)
+ 		}
+ #endif
+ 		printf("SPL: %p : 0x%lx ", frame, frame->caller);
+-		panic_print_symbol_name((vm_address_t)frame->caller);
++		spl_panic_print_symbol_name((vm_address_t)frame->caller);
+ 		printf("\n");
+ 		frame = frame->prev;
+ 	}
+@@ -404,6 +404,6 @@ void
+ 	print_symbol(uintptr_t symbol)
+ {
+ 	printf("SPL: ");
+-	panic_print_symbol_name((vm_address_t)(symbol));
++	spl_panic_print_symbol_name((vm_address_t)(symbol));
+ 	printf("\n");
+ }
+diff --git a/module/os/macos/zfs/arc_os.c b/module/os/macos/zfs/arc_os.c
+index 000000000..000000000 100644
+--- a/module/os/macos/zfs/arc_os.c
++++ b/module/os/macos/zfs/arc_os.c
+@@ -786,7 +786,7 @@ arc_unregister_hotplug(void)
+ }
+ 
+ void
+-spl_set_arc_no_grow(int i)
++zfs_spl_set_arc_no_grow(int i)
+ {
+ 	arc_no_grow = i;
+ 	if (i == B_TRUE)
+diff --git a/module/os/macos/zfs/zfs_osx.cpp b/module/os/macos/zfs/zfs_osx.cpp
+index 000000000..000000000 100644
+--- a/module/os/macos/zfs/zfs_osx.cpp
++++ b/module/os/macos/zfs/zfs_osx.cpp
+@@ -51,7 +51,10 @@ extern "C" {
+ 
+ extern SInt32 zfs_active_fs_count;
+ 
++void spl_register_arc_no_grow_callback(void (*)(int));
++void zfs_spl_set_arc_no_grow(int);
++
+ #ifdef DEBUG
+ #define	ZFS_DEBUG_STR	" (DEBUG mode)"
+ #else
+ 
+diff --git a/module/os/macos/zfs/zfs_osx.cpp b/module/os/macos/zfs/zfs_osx.cpp
+index 000000000..000000000 100644
+--- a/module/os/macos/zfs/zfs_osx.cpp
++++ b/module/os/macos/zfs/zfs_osx.cpp
+@@ -190,6 +193,7 @@ org_openzfsonosx_zfs_zvol::start(IOService *provider)
+ 
+ 	/* Fire up all SPL modules and threads */
+ 	spl_start(NULL, NULL);
++	spl_register_arc_no_grow_callback(zfs_spl_set_arc_no_grow);
+ 
+ 	/* registerService() allows zconfigd to match against the service */
+ 	this->registerService();
+diff --git a/module/os/macos/spl/spl-seg_kmem.c b/module/os/macos/spl/spl-seg_kmem.c
+index 000000000..000000000 100644
+--- a/module/os/macos/spl/spl-seg_kmem.c
++++ b/module/os/macos/spl/spl-seg_kmem.c
+@@ -96,8 +96,7 @@ extern vm_map_t kernel_map;
+  * These extern prototypes has to be carefully checked against XNU source
+  * in case Apple changes them. They are not defined in the "allowed" parts
+  * of the kernel.framework
+  */
+-typedef uint8_t vm_tag_t;
+ 
+ /*
+  * Tag we use to identify memory we have allocated
+diff --git a/include/os/macos/spl/sys/stropts.h b/include/os/macos/spl/sys/stropts.h
+index 000000000..000000000 100644
+--- a/include/os/macos/spl/sys/stropts.h
++++ b/include/os/macos/spl/sys/stropts.h
+@@ -155,6 +155,11 @@ strpbrk(const char *s, const char *b)
+ 	return (NULL);
+ }
+ 
++#ifdef strrchr
++#undef strrchr
++#endif
++#ifndef __APPLE__
++
+ 
+ static inline char *
+ strrchr(const char *p, int ch)
+@@ -174,6 +179,7 @@ strrchr(const char *p, int ch)
+ 	}
+ 	/* NOTREACHED */
+ }
++#endif
+ 
+ static inline int
+ is_ascii_str(const char *str)
+diff --git a/include/os/macos/spl/sys/timer.h b/include/os/macos/spl/sys/timer.h
+index 000000000..000000000 100644
+--- a/include/os/macos/spl/sys/timer.h
++++ b/include/os/macos/spl/sys/timer.h
+@@ -72,7 +72,13 @@
+ 
+ 
+ 
++#ifdef __cplusplus
++extern "C" {
++#endif
+ extern void delay(clock_t ticks);
++#ifdef __cplusplus
++}
++#endif
+ 
+ #define	usleep_range(wakeup, whocares)			\
+ 	do {						\
+diff --git a/module/os/macos/zfs/ldi_osx.c b/module/os/macos/zfs/ldi_osx.c
+index 000000000..000000000 100644
+--- a/module/os/macos/zfs/ldi_osx.c
++++ b/module/os/macos/zfs/ldi_osx.c
+@@ -413,6 +413,6 @@ SYSCTL_UINT(_ldi_debug, OID_AUTO, use_vnode_from_path,
+ /*
+  * Globals
+  */
+-static volatile int64_t		ldi_handle_hash_count;
++static volatile int32_t		ldi_handle_hash_count;
+ 
+ static list_t			ldi_handle_hash_list[LH_HASH_SZ];
+@@ -2340,12 +2340,12 @@ ldi_init(void *arg)
+ 	kstat_install(ldi_ksp);
+ 
+ 	/* Register sysctls */
+-	sysctl_register_oid(&sysctl__ldi);
+-	sysctl_register_oid(&sysctl__ldi_debug);
+-	sysctl_register_oid(&sysctl__ldi_debug_use_iokit_from_path);
+-	sysctl_register_oid(&sysctl__ldi_debug_use_iokit_from_dev);
+-	sysctl_register_oid(&sysctl__ldi_debug_use_dev_from_path);
+-	sysctl_register_oid(&sysctl__ldi_debug_use_vnode_from_path);
++	sysctl_register_oid_early_kext(&sysctl__ldi);
++	sysctl_register_oid_early_kext(&sysctl__ldi_debug);
++	sysctl_register_oid_early_kext(&sysctl__ldi_debug_use_iokit_from_path);
++	sysctl_register_oid_early_kext(&sysctl__ldi_debug_use_iokit_from_dev);
++	sysctl_register_oid_early_kext(&sysctl__ldi_debug_use_dev_from_path);
++	sysctl_register_oid_early_kext(&sysctl__ldi_debug_use_vnode_from_path);
+ 
+ 	/* Create handle hash lists and locks */
+ 	ldi_handle_hash_count = 0;
+@@ -2405,8 +2405,8 @@ ldi_fini(void)
+ 	mutex_destroy(&ldi_ev_callback_list.le_lock);
+ 
+ 	if (ldi_handle_hash_count != 0) {
+-		dprintf("%s ldi_handle_hash_count %llu\n", __func__,
+-		    ldi_handle_hash_count);
++		dprintf("%s ldi_handle_hash_count %d\n", __func__,
++		    (int)ldi_handle_hash_count);
+ 	}
+ 
+ 	/* Destroy handle hash lists and locks */
+@@ -2427,7 +2427,7 @@ ldi_fini(void)
+ 	}
+ 
+ 	if (ldi_handle_hash_count != 0) {
+-		dprintf("%s handle_hash_count still %llu\n", __func__,
+-		    ldi_handle_hash_count);
++		dprintf("%s handle_hash_count still %d\n", __func__,
++		    (int)ldi_handle_hash_count);
+ 	}
+ }
+diff --git a/module/os/macos/spl/spl-osx.c b/module/os/macos/spl/spl-osx.c
+index 000000000..000000000 100644
+--- a/module/os/macos/spl/spl-osx.c
++++ b/module/os/macos/spl/spl-osx.c
+@@ -30,6 +30,7 @@
+ #include <sys/systm.h>
+ #include <mach/mach_types.h>
+ #include <libkern/libkern.h>
++#include <libkern/OSAtomic.h>
+ #include <sys/thread.h>
+ #include <sys/mutex.h>
+ #include <sys/rwlock.h>
+@@ -47,6 +48,8 @@
+ #include <sys/systeminfo.h>
+ 
+ static utsname_t utsname_static = { { 0 } };
++static volatile SInt32 spl_started = 0;
++static volatile SInt32 spl_retain_count = 0;
+ 
+ unsigned int max_ncpus = 0;
+ unsigned int boot_ncpus = 0;
+@@ -452,11 +455,31 @@
+ 	if (done != NULL)
+ 		*done = local_done;
+ 	return (ret);
++}
++
++kern_return_t
++spl_retain(void)
++{
++	if (!spl_started)
++		return (KERN_FAILURE);
++
++	OSIncrementAtomic(&spl_retain_count);
++	return (KERN_SUCCESS);
++}
++
++void
++spl_release(void)
++{
++	if (spl_retain_count > 0)
++		OSDecrementAtomic(&spl_retain_count);
+ }
+ 
+ kern_return_t
+ spl_start(kmod_info_t *ki, void *d)
+ {
++	if (spl_started)
++		return (KERN_SUCCESS);
++
+ 	printf("SPL: loading\n");
+ 
+ 	int ncpus;
+@@ -577,12 +600,20 @@
+ 
+ 	spl_processor_init();
+ 
++	spl_started = 1;
+ 	return (KERN_SUCCESS);
+ }
+ 
+ kern_return_t
+ spl_stop(kmod_info_t *ki, void *d)
+ {
++	if (spl_retain_count != 0) {
++		printf("SPL: refusing unload with %d retain(s)\n", spl_retain_count);
++		return (KERN_FAILURE);
++	}
++	if (!spl_started)
++		return (KERN_SUCCESS);
++
+ 	spl_kmem_thread_fini();
+ 	spl_vnode_fini();
+ 	spl_taskq_fini();
+@@ -599,5 +630,6 @@
+ 	lck_grp_free(spl_mtx_grp);
+ 	spl_mtx_grp = NULL;
+ 
++	spl_started = 0;
+ 	return (KERN_SUCCESS);
+ }
+diff --git a/module/os/macos/zfs/zfs_osx.cpp b/module/os/macos/zfs/zfs_osx.cpp
+index 000000000..000000000 100644
+--- a/module/os/macos/zfs/zfs_osx.cpp
++++ b/module/os/macos/zfs/zfs_osx.cpp
+@@ -59,6 +59,8 @@
+ 
+ extern SInt32 zfs_active_fs_count;
+ 
++kern_return_t spl_retain(void);
++void spl_release(void);
+ void spl_register_arc_no_grow_callback(void (*)(int));
+ void zfs_spl_set_arc_no_grow(int);
+ 
+@@ -190,8 +192,11 @@
+ 	if (!res)
+ 		return (res);
+ 
+-	/* Fire up all SPL modules and threads */
+-	spl_start(NULL, NULL);
++	/* Hold the already-loaded SPL dependency while ZFS is active. */
++	if (spl_retain() != KERN_SUCCESS) {
++		IOLog("ZFS: SPL dependency is not started\n");
++		return (false);
++	}
+ 	spl_register_arc_no_grow_callback(zfs_spl_set_arc_no_grow);
+ 
+ 	/* registerService() allows zconfigd to match against the service */
+@@ -269,7 +274,7 @@
+ 	return (true);
+ 
+ failure:
+-	spl_stop(NULL, NULL);
++	spl_release();
+ 	sysctl_unregister_oid(&sysctl__zfs_kext_version);
+ 	sysctl_unregister_oid(&sysctl__zfs);
+ 	return (false);
+@@ -297,7 +302,7 @@
+ 	sysctl_unregister_oid(&sysctl__zfs_kext_version);
+ 	sysctl_unregister_oid(&sysctl__zfs);
+ 
+-	spl_stop(NULL, NULL);
++	spl_release();
+ 
+ 	printf("ZFS: Unloaded module v%s-%s%s\n",
+ 	    ZFS_META_VERSION, ZFS_META_RELEASE, ZFS_DEBUG_STR);
+diff --git a/lib/libspl/include/sys/uio.h b/lib/libspl/include/sys/uio.h
+index 000000000..000000000 100644
+--- a/lib/libspl/include/sys/uio.h
++++ b/lib/libspl/include/sys/uio.h
+@@ -58,6 +58,10 @@ typedef enum zfs_uio_seg {
+ 
+ #elif defined(__FreeBSD__)
+ typedef enum uio_seg  zfs_uio_seg_t;
++#elif defined(__APPLE__)
++typedef enum zfs_uio_seg {
++	ZFS_UIO_SYSSPACE =	0,
++} zfs_uio_seg_t;
+ #endif
+ 
+ typedef struct zfs_uio {
+diff --git a/lib/libspl/include/os/macos/sys/uio.h b/lib/libspl/include/os/macos/sys/uio.h
+index 000000000..000000000 100644
+--- a/lib/libspl/include/os/macos/sys/uio.h
++++ b/lib/libspl/include/os/macos/sys/uio.h
+@@ -69,7 +69,9 @@
+  * Segment flag values.
+  */
+ typedef enum uio_seg { UIO_USERSPACE, UIO_SYSSPACE, UIO_USERISPACE } uio_seg_t;
+ 
++#ifndef _LIBSPL_SYS_UIO_H
+ typedef enum uio_seg  zfs_uio_seg_t;
++#endif
+ 
+ struct uio {
+
+diff --git a/cmd/zpool/os/macos/zpool_vdev_os.c b/cmd/zpool/os/macos/zpool_vdev_os.c
+index 000000000..000000000 100644
+--- a/cmd/zpool/os/macos/zpool_vdev_os.c
++++ b/cmd/zpool/os/macos/zpool_vdev_os.c
+@@ -179,7 +179,7 @@ check_device(const char *path, boolean_t force,
+ 	if (error != 0)
+ 		return (error);
+ 
+-	return (check_file(path, force, isspare));
++	return (check_file_generic(path, force, isspare));
+ }
+ 
+ int
+diff --git a/lib/os/macos/libdiskmgt/diskutil.c b/lib/os/macos/libdiskmgt/diskutil.c
+index 000000000..000000000 100644
+--- a/lib/os/macos/libdiskmgt/diskutil.c
++++ b/lib/os/macos/libdiskmgt/diskutil.c
+@@ -74,6 +74,7 @@ run_command(char *argv[], int *out_length)
+ 		dup2(err_pipe[1], STDERR_FILENO);
+ 
+ 		execv(argv[0], argv);
++		_exit(127);
+ 	}
+ 
+ 	// Parent
+diff --git a/lib/os/macos/libdiskmgt/inuse_macswap.c b/lib/os/macos/libdiskmgt/inuse_macswap.c
+index 000000000..000000000 100644
+--- a/lib/os/macos/libdiskmgt/inuse_macswap.c
++++ b/lib/os/macos/libdiskmgt/inuse_macswap.c
+@@ -45,38 +45,33 @@
+ inuse_macswap(const char *dev_name)
+ {
+ 	size_t oldlen = 0;
+-	char *tmp;
+ 	char *swap_filename;
+-	char real_swap_path[MAXPATHLEN];
+-	char real_dev_path[MAXPATHLEN];
+-	int idx;
++	ssize_t swap_dirlen;
++	ssize_t dev_dirlen;
++	int in_swap_dir;
++
++	if (dev_name == NULL)
++		return (0);
+ 
+ 	/* Obtain the swap file prefix (path + prototype basename) */
+-	if (sysctlbyname(SWAP_SYSCTL_NAME, NULL, &oldlen, NULL, 0) != 0)
++	if (sysctlbyname(SWAP_SYSCTL_NAME, NULL, &oldlen, NULL, 0) != 0 ||
++	    oldlen == 0)
+ 		return (0);
+ 
+ 	swap_filename = (char *)malloc(oldlen);
++	if (swap_filename == NULL)
++		return (0);
+ 	if (sysctlbyname(SWAP_SYSCTL_NAME, swap_filename, &oldlen, NULL,
+-	    0) != 0)
++	    0) != 0) {
++		free(swap_filename);
+ 		return (0);
++	}
+ 
+-	/*
+-	 * Get the directory portion of the vm.swapfileprefix sysctl
+-	 * once links etc have been resolved.
+-	 */
+-	tmp = realpath(swap_filename, NULL);
+-	idx = zfs_dirnamelen(swap_filename);
++	swap_dirlen = zfs_dirnamelen(swap_filename);
++	dev_dirlen = zfs_dirnamelen(dev_name);
++	in_swap_dir = (swap_dirlen == dev_dirlen &&
++	    strncmp(dev_name, swap_filename, (size_t)swap_dirlen) == 0);
+ 
+-	(void) strlcpy(real_swap_path, swap_filename, idx);
+ 	free(swap_filename);
+-	free(tmp);
+-
+-	/* Get the (resolved) directory portion of dev_name */
+-	tmp = realpath(dev_name, NULL);
+-	idx = zfs_dirnamelen(tmp);
+-	(void) strlcpy(real_dev_path, tmp, idx);
+-	free(tmp);
+-
+-	/* If the strings are equal, the file is in the swap dir */
+-	return (strcmp(real_dev_path, real_swap_path) == 0);
++	return (in_swap_dir);
+ }
+diff --git a/module/os/macos/spl/spl-uio.c b/module/os/macos/spl/spl-uio.c
+index 000000000..000000000 100644
+--- a/module/os/macos/spl/spl-uio.c
++++ b/module/os/macos/spl/spl-uio.c
+@@ -58,71 +58,88 @@ zfs_uiomove_iov(void *p, size_t n, zfs_uio_rw_t rw, zfs_uio_t *uio)
+ 
+ 			default:
+ 				VERIFY(0);
+ 				return (-1);
+ 		}
+ 		skip += cnt;
+ 		if (skip == iov->iov_len) {
+ 			skip = 0;
+ 			uio->uio_iov = (++iov);
+ 			uio->uio_iovcnt--;
+ 		}
+ 		uio->uio_skip = skip;
+ 		uio->uio_resid -= cnt;
+ 		uio->uio_loffset += cnt;
+ 		p = (caddr_t)p + cnt;
+ 		n -= cnt;
+ 	}
+ 	return (0);
+ }
+ 
++static int
++zfs_xnu_uiomove_chunked(const char *p, size_t n, enum uio_rw rw,
++    struct uio *uio)
++{
++	while (n > 0) {
++		size_t chunk = MIN(n, PAGE_SIZE);
++		int error;
++
++		error = uiomove(p, chunk, uio);
++		if (error != 0)
++			return (error);
++		p += chunk;
++		n -= chunk;
++	}
++	return (0);
++}
++
+ int
+ zfs_uiomove(const char *p, size_t n, enum uio_rw rw, zfs_uio_t *uio)
+ {
+ 	int result;
+ 
+ 	if (uio->uio_iov == NULL) {
+ 		uio_setrw(uio->uio_xnu, rw);
+-		result = uiomove(p, n, uio->uio_xnu);
++		result = zfs_xnu_uiomove_chunked(p, n, rw, uio->uio_xnu);
+ 		return (result);
+ 	}
+ 
+ 	result = zfs_uiomove_iov((void *)p, n, rw, uio);
+ 	return (result);
+ }
+ 
+ /*
+  * same as uiomove() but doesn't modify uio structure.
+  * return in cbytes how many bytes were copied.
+  */
+ int
+ zfs_uiocopy(const char *p, size_t n, enum uio_rw rw, zfs_uio_t *uio,
+     size_t *cbytes)
+ {
+ 	int result;
+ 	if (uio->uio_iov == NULL) {
+ 		struct uio *nuio = uio_duplicate(uio->uio_xnu);
+ 		unsigned long long x = uio_resid(uio->uio_xnu);
+ 		if (!nuio)
+ 			return (ENOMEM);
+ 		uio_setrw(nuio, rw);
+-		result = uiomove(p, n, nuio);
++		result = zfs_xnu_uiomove_chunked(p, n, rw, nuio);
+ 		*cbytes = x-uio_resid(nuio);
+ 		uio_free(nuio);
+ 		return (result);
+ 	}
+ 
+ 	zfs_uio_t uio_copy;
+ 
+ 	memcpy(&uio_copy, uio, sizeof (zfs_uio_t));
+ 	result = zfs_uiomove_iov((void *)p, n, rw, &uio_copy);
+ 
+ 	*cbytes = uio->uio_resid - uio_copy.uio_resid;
+ 
+ 	return (result);
+ }
+ 
+ void
+ zfs_uioskip(zfs_uio_t *uio, size_t n)
+ {
+ 	if (uio->uio_iov == NULL) {
+ 		uio_update(uio->uio_xnu, n);
+diff --git a/include/sys/arc.h b/include/sys/arc.h
+index 000000000..000000000 100644
+--- a/include/sys/arc.h
++++ b/include/sys/arc.h
+@@ -309,10 +309,6 @@ void arc_buf_sigsegv(int sig, siginfo_t *si, void *unused);
+ void arc_buf_freeze(arc_buf_t *buf);
+ void arc_buf_thaw(arc_buf_t *buf);
+-#ifdef ZFS_DEBUG
+ int arc_referenced(arc_buf_t *buf);
+-#else
+-#define	arc_referenced(buf) ((void) sizeof (buf), 0)
+-#endif
+ 
+ int arc_read(zio_t *pio, spa_t *spa, const blkptr_t *bp,
+     arc_read_done_func_t *done, void *priv, zio_priority_t priority,
+diff --git a/module/zfs/arc.c b/module/zfs/arc.c
+index 000000000..000000000 100644
+--- a/module/zfs/arc.c
++++ b/module/zfs/arc.c
+@@ -6601,13 +6601,11 @@ arc_released(arc_buf_t *buf)
+ 	    buf->b_hdr->b_l1hdr.b_state == arc_anon);
+ }
+ 
+-#ifdef ZFS_DEBUG
+ int
+ arc_referenced(arc_buf_t *buf)
+ {
+ 	return (zfs_refcount_count(&buf->b_hdr->b_l1hdr.b_refcnt));
+ }
+-#endif
+ 
+ static void
+ arc_write_ready(zio_t *zio)
+diff --git a/module/zfs/multilist.c b/module/zfs/multilist.c
+index 000000000..000000000 100644
+--- a/module/zfs/multilist.c
++++ b/module/zfs/multilist.c
+@@ -30,14 +30,10 @@ uint_t zfs_multilist_num_sublists = 0;
+  * Given the object contained on the list, return a pointer to the
+  * object's multilist_node_t structure it contains.
+  */
+-#ifdef ZFS_DEBUG
+ static multilist_node_t *
+ multilist_d2l(multilist_t *ml, void *obj)
+ {
+ 	return ((multilist_node_t *)((char *)obj + ml->ml_offset));
+ }
+-#else
+-#define	multilist_d2l(ml, obj) ((void) sizeof (ml), (void) sizeof (obj), NULL)
+-#endif
+ 
+ /*
+  * Initialize a new mutlilist using the parameters specified.
+diff --git a/module/os/macos/zfs/ZFSDataset.cpp b/module/os/macos/zfs/ZFSDataset.cpp
+index 000000000..000000000 100644
+--- a/module/os/macos/zfs/ZFSDataset.cpp
++++ b/module/os/macos/zfs/ZFSDataset.cpp
+@@ -376,11 +376,10 @@ ZFSDataset::setDatasetName(const char *name)
+ 	lockForArbitration();
+ 	if ((prevDict = OSDynamicCast(OSDictionary,
+ 	    getProperty(kIOPropertyDeviceCharacteristicsKey))) == NULL) {
+-	    /* Unlock IORegistryEntry */
+-		unlockForArbitration();
+ 		dprintf("couldn't get prop dict");
++	} else {
++		prevDict->retain();
+ 	}
+-	prevDict->retain();
+ 	unlockForArbitration();
+ 
+ 	/* Clone existing dictionary */
+diff --git a/include/os/macos/zfs/sys/zfs_znode_impl.h b/include/os/macos/zfs/sys/zfs_znode_impl.h
+index 000000000..000000000 100644
+--- a/include/os/macos/zfs/sys/zfs_znode_impl.h
++++ b/include/os/macos/zfs/sys/zfs_znode_impl.h
+@@ -84,6 +84,7 @@ extern int zfs_zget_ext(zfsvfs_t *zfsvfs, uint64_t obj_num,
+ 	uint32_t		z_document_id;		\
+ 	uint64_t		z_finder_parentid;	\
+ 	boolean_t		z_finder_hardlink;	\
++	boolean_t		z_has_negatives;	\
+ 	uint64_t		z_write_gencount;	\
+ 	char			z_name_cache[MAXPATHLEN];	\
+ 	boolean_t		z_skip_truncate_undo_decmpfs;	\
+diff --git a/module/os/macos/zfs/zfs_znode_os.c b/module/os/macos/zfs/zfs_znode_os.c
+index 000000000..000000000 100644
+--- a/module/os/macos/zfs/zfs_znode_os.c
++++ b/module/os/macos/zfs/zfs_znode_os.c
+@@ -565,6 +565,7 @@ zfs_znode_alloc(zfsvfs_t *zfsvfs, dmu_buf_t *db, int blksz,
+ 	zp->z_name_cache[0] = 0;
+ 	zp->z_finder_parentid = 0;
+ 	zp->z_finder_hardlink = FALSE;
++	zp->z_has_negatives = B_FALSE;
+ 
+ 	taskq_init_ent(&zp->z_attach_taskq);
+ 
+diff --git a/module/os/macos/zfs/zfs_vnops_osx.c b/module/os/macos/zfs/zfs_vnops_osx.c
+index 000000000..000000000 100644
+--- a/module/os/macos/zfs/zfs_vnops_osx.c
++++ b/module/os/macos/zfs/zfs_vnops_osx.c
+@@ -97,7 +97,44 @@ extern int (**zfs_fifonodeops)();
+ 
+ /* Empty FinderInfo struct */
+ static u_int32_t emptyfinfo[8] = {0};
++
++static void
++zfs_vnop_note_negative_cache(struct vnode *dvp)
++{
++	znode_t *dzp;
++
++	if (dvp == NULL)
++		return;
++	dzp = VTOZ(dvp);
++	if (dzp == NULL)
++		return;
++
++	mutex_enter(&dzp->z_lock);
++	dzp->z_has_negatives = B_TRUE;
++	mutex_exit(&dzp->z_lock);
++}
++
++static void
++zfs_vnop_purge_negatives(struct vnode *dvp)
++{
++	znode_t *dzp;
++	boolean_t purge;
++
++	if (dvp == NULL)
++		return;
++	dzp = VTOZ(dvp);
++	if (dzp == NULL)
++		return;
++
++	mutex_enter(&dzp->z_lock);
++	purge = dzp->z_has_negatives;
++	dzp->z_has_negatives = B_FALSE;
++	mutex_exit(&dzp->z_lock);
++
++	if (purge)
++		cache_purge_negatives(dvp);
++}
+ 
+ /* vnop_lookup needs path buffer each time */
+ static kmem_cache_t *vnop_lookup_cache = NULL;
+ 
+@@ -1403,6 +1440,7 @@ zfs_vnop_lookup(struct vnop_lookup_args *ap)
+ 			if ((cnp->cn_flags & MAKEENTRY) &&
+ 			    ap->a_cnp->cn_nameiop != CREATE) {
+ 				cache_enter(ap->a_dvp, NULL, ap->a_cnp);
++				zfs_vnop_note_negative_cache(ap->a_dvp);
+ 				dprintf("Negative-cache made for '%s'\n",
+ 				    filename);
+ 			}
+@@ -1480,7 +1518,7 @@ zfs_vnop_create(struct vnop_create_args *ap)
+ 	error = zfs_create(VTOZ(ap->a_dvp), cnp->cn_nameptr, vap, excl, mode,
+ 	    &zp, cr, 0, NULL, NULL);
+ 	if (!error) {
+-		cache_purge_negatives(ap->a_dvp);
++		zfs_vnop_purge_negatives(ap->a_dvp);
+ 		*ap->a_vpp = ZTOV(zp);
+ 
+ 		// Also tell XNU what VAPs we handled.
+@@ -1770,7 +1808,7 @@ zfs_vnop_mkdir(struct vnop_mkdir_args *ap)
+ 	    &zp, cr, /* flags */0, /* vsecp */NULL, NULL);
+ 	if (!error) {
+ 		*ap->a_vpp = ZTOV(zp);
+-		cache_purge_negatives(ap->a_dvp);
++		zfs_vnop_purge_negatives(ap->a_dvp);
+ 		vnode_update_identity(*ap->a_vpp, ap->a_dvp,
+ 		    (const char *)ap->a_cnp->cn_nameptr, ap->a_cnp->cn_namelen,
+ 		    0, VNODE_UPDATE_NAME);
+@@ -2153,8 +2191,8 @@ zfs_vnop_rename(struct vnop_rename_args *ap)
+ 	    /* rflags */ 0, NULL, NULL);
+ 
+ 	if (!error) {
+-		cache_purge_negatives(ap->a_fdvp);
+-		cache_purge_negatives(ap->a_tdvp);
++		zfs_vnop_purge_negatives(ap->a_fdvp);
++		zfs_vnop_purge_negatives(ap->a_tdvp);
+ 		cache_purge(ap->a_fvp);
+ 
+ 		zfs_rename_hardlink(ap->a_fvp, ap->a_tvp,
+@@ -2226,8 +2264,8 @@ zfs_vnop_renamex(struct vnop_renamex_args *ap)
+ 		(ap->a_flags&VFS_RENAME_EXCL), 0, NULL, NULL);
+ 
+ 	if (!error) {
+-		cache_purge_negatives(ap->a_fdvp);
+-		cache_purge_negatives(ap->a_tdvp);
++		zfs_vnop_purge_negatives(ap->a_fdvp);
++		zfs_vnop_purge_negatives(ap->a_tdvp);
+ 		cache_purge(ap->a_fvp);
+ 
+ 		zfs_rename_hardlink(ap->a_fvp, ap->a_tvp,
+@@ -2292,7 +2330,7 @@ zfs_vnop_symlink(struct vnop_symlink_args *ap)
+ 	    ap->a_vap, ap->a_target, &zp, cr, 0, NULL);
+ 	if (!error) {
+ 		*ap->a_vpp = ZTOV(zp);
+-		cache_purge_negatives(ap->a_dvp);
++		zfs_vnop_purge_negatives(ap->a_dvp);
+ 		vnode_update_identity(*ap->a_vpp, NULL,
+ 			(const char *)ap->a_cnp->cn_nameptr,
+ 			ap->a_cnp->cn_namelen, 0,
+@@ -2372,7 +2410,7 @@ zfs_vnop_link(struct vnop_link_args *ap)
+ 		// handles the target
+ 		vnode_setmultipath(ap->a_vp);
+ 		cache_purge(ap->a_vp);
+-		cache_purge_negatives(ap->a_tdvp);
++		zfs_vnop_purge_negatives(ap->a_tdvp);
+ 		vnode_update_identity(ap->a_vp, NULL,
+ 			(const char *)ap->a_cnp->cn_nameptr,
+ 			ap->a_cnp->cn_namelen, 0,
+diff --git a/include/os/macos/spl/sys/kstat.h b/include/os/macos/spl/sys/kstat.h
+index 000000000..000000000 100644
+--- a/include/os/macos/spl/sys/kstat.h
++++ b/include/os/macos/spl/sys/kstat.h
+@@ -215,6 +215,17 @@ void kstat_named_setstr(kstat_named_t *knp, const char *src);
+ 
+ struct sbuf;
+ struct sysctl_req;
++#define	sbuf_data		spl_sbuf_data
++#define	sbuf_delete		spl_sbuf_delete
++#define	sbuf_finish		spl_sbuf_finish
++#define	sbuf_hexdump		spl_sbuf_hexdump
++#define	sbuf_len		spl_sbuf_len
++#define	sbuf_new		spl_sbuf_new
++#define	sbuf_new_for_sysctl	spl_sbuf_new_for_sysctl
++#define	sbuf_printf		spl_sbuf_printf
++#define	sbuf_vprintf		spl_sbuf_vprintf
++extern char *sbuf_data(struct sbuf *);
++extern int  sbuf_len(struct sbuf *);
+ extern int  sbuf_printf(struct sbuf *, const char *, ...) __printflike(2, 3);
+ extern void sbuf_finish(struct sbuf *);
+ extern void sbuf_delete(struct sbuf *);
+diff --git a/module/os/macos/spl/spl-kstat.c b/module/os/macos/spl/spl-kstat.c
+index 000000000..000000000 100644
+--- a/module/os/macos/spl/spl-kstat.c
++++ b/module/os/macos/spl/spl-kstat.c
+@@ -157,12 +157,12 @@ sbuf_delete(struct sbuf *s)
+ {
+ 	int isdyn;
+ 	if (SBUF_ISDYNAMIC(s)) {
+-		IOFreeAligned(s->s_buf, s->s_size);
++		IOFreeData(s->s_buf, s->s_size);
+ 	}
+ 	isdyn = SBUF_ISDYNSTRUCT(s);
+ 	memset(s, 0, sizeof (*s));
+ 	if (isdyn) {
+-		IOFreeType(s, struct sbuf);
++		IOFreeData(s, sizeof (*s));
+ 	}
+ }
+ 
+@@ -194,13 +194,13 @@ sbuf_extend(struct sbuf *s, int addlen)
+ 	}
+ 
+ 	newsize = sbuf_extendsize(s->s_size + addlen);
+-	newbuf = (char *)IOMallocAligned(newsize, _Alignof(char));
++	newbuf = (char *)IOMallocData(newsize);
+ 	if (newbuf == NULL) {
+ 		return (-1);
+ 	}
+ 	memcpy(newbuf, s->s_buf, s->s_size);
+ 	if (SBUF_ISDYNAMIC(s)) {
+-		IOFreeAligned(s->s_buf, s->s_size);
++		IOFreeData(s->s_buf, s->s_size);
+ 	} else {
+ 		SBUF_SETFLAG(s, SBUF_DYNAMIC);
+ 	}
+@@ -214,7 +214,7 @@ sbuf_new(struct sbuf *s, char *buf, int length, int flags)
+ {
+ 	flags &= SBUF_USRFLAGMSK;
+ 	if (s == NULL) {
+-		s = IOMallocType(struct sbuf);
++		s = (struct sbuf *)IOMallocData(sizeof (*s));
+ 		if (s == NULL) {
+ 			return (NULL);
+ 		}
+@@ -233,10 +233,10 @@ sbuf_new(struct sbuf *s, char *buf, int length, int flags)
+ 	if (flags & SBUF_AUTOEXTEND) {
+ 		s->s_size = sbuf_extendsize(s->s_size);
+ 	}
+-	s->s_buf = (char *)IOMallocAligned(s->s_size, _Alignof(char));
++	s->s_buf = (char *)IOMallocData(s->s_size);
+ 	if (s->s_buf == NULL) {
+ 		if (SBUF_ISDYNSTRUCT(s)) {
+-			IOFreeType(s, struct sbuf);
++			IOFreeData(s, sizeof (*s));
+ 		}
+ 		return (NULL);
+ 	}
+diff --git a/module/os/macos/zfs/zfs_debug.c b/module/os/macos/zfs/zfs_debug.c
+index 000000000..000000000 100644
+--- a/module/os/macos/zfs/zfs_debug.c
++++ b/module/os/macos/zfs/zfs_debug.c
+@@ -243,9 +243,6 @@ __dprintf(boolean_t dprint, const char *file, const char *func,
+ 
+ 	__zfs_dbgmsg(buf);
+ 
+-	/* Also emit string to log/console */
+-	printf("%s\n", buf);
+-
+ 	kmem_free(buf, size);
+ }
+ 
+@@ -263,3 +260,9 @@ zfs_dbgmsg_print(const char *tag)
+ 		(void) printf("%s\n", zdm->zdm_msg);
+ 	mutex_exit(&zfs_dbgmsgs_lock);
+ }
++
++ZFS_MODULE_PARAM(zfs, zfs_, dbgmsg_enable, INT, ZMOD_RW,
++	"Enable ZFS debug message log");
++
++ZFS_MODULE_PARAM(zfs, zfs_, dbgmsg_maxsize, INT, ZMOD_RW,
++	"Maximum ZFS debug message log size");
+diff --git a/module/zfs/zio.c b/module/zfs/zio.c
+index 000000000..000000000 100644
+--- a/module/zfs/zio.c
++++ b/module/zfs/zio.c
+@@ -5120,10 +5120,8 @@ zio_ready(zio_t *zio)
+ 		zio->io_ready(zio);
+ 	}
+ 
+-#ifdef ZFS_DEBUG
+ 	if (bp != NULL && bp != &zio->io_bp_copy)
+ 		zio->io_bp_copy = *bp;
+-#endif
+ 
+ 	if (zio->io_error != 0) {
+ 		zio->io_pipeline = ZIO_INTERLOCK_PIPELINE;
+@@ -5298,9 +5296,11 @@ zio_done(zio_t *zio)
+ 	if (zio->io_bp != NULL && !BP_IS_EMBEDDED(zio->io_bp)) {
+ 		ASSERT(zio->io_bp->blk_pad[0] == 0);
+ 		ASSERT(zio->io_bp->blk_pad[1] == 0);
+-		ASSERT(memcmp(zio->io_bp, &zio->io_bp_copy,
+-		    sizeof (blkptr_t)) == 0 ||
+-		    (zio->io_bp == zio_unique_parent(zio)->io_bp));
++		boolean_t bp_unchanged = (memcmp(zio->io_bp,
++		    &zio->io_bp_copy, sizeof (blkptr_t)) == 0);
++		zio_t *pio = bp_unchanged ? NULL : zio_unique_parent(zio);
++		ASSERT(bp_unchanged ||
++		    (pio != NULL && zio->io_bp == pio->io_bp));
+ 		if (zio->io_type == ZIO_TYPE_WRITE && !BP_IS_HOLE(zio->io_bp) &&
+ 		    zio->io_bp_override == NULL &&
+ 		    !(zio->io_flags & ZIO_FLAG_IO_REPAIR)) {
+diff --git a/lib/libspl/include/os/macos/unistd.h b/lib/libspl/include/os/macos/unistd.h
+index 000000000..000000000 100644
+--- a/lib/libspl/include/os/macos/unistd.h
++++ b/lib/libspl/include/os/macos/unistd.h
+@@ -37,6 +37,7 @@
+ #define	ftruncate64	ftruncate
+ #define	lseek64		lseek
+ 
++#define	pipe2		spl_pipe2
+ 
+ static inline int
+ pipe2(int fildes[2], int flags)

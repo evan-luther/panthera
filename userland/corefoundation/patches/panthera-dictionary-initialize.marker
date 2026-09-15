@@ -1,0 +1,4 @@
+# Distinct strong markers for panthera-dictionary-initialize.patch
+# Format: <relative_path_in_CF_SRC>:<marker_string>
+CFDictionary.c:extern Boolean __CFInitializing;
+CFDictionary.c:if (!__CFInitialized && !__CFInitializing) {

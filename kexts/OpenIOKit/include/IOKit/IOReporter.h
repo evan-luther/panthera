@@ -1,0 +1,6 @@
+#ifndef PANTHERA_FORWARD_IOKIT_IOREPORTER_H
+#define PANTHERA_FORWARD_IOKIT_IOREPORTER_H
+
+#include <IOKit/IOKernelReporters.h>
+
+#endif

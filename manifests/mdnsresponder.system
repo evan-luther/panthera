@@ -1,0 +1,9 @@
+# Panthera mDNSResponder rootfs manifest
+# Format: kind|required|source|destination|producer|verification|condition|note
+# kind: file, dir, glob, generated
+
+file|optional|userland/mdnsresponder/sbin/mDNSResponder|/usr/sbin/mDNSResponder|userland/mdnsresponder/build_mdnsresponder.sh|Bonjour smoke|always|Apple mDNSResponder POSIX daemon
+file|optional|userland/mdnsresponder/bin/dns-sd|/usr/bin/dns-sd|userland/mdnsresponder/build_mdnsresponder.sh|Bonjour smoke|always|DNS-SD client utility
+file|optional|userland/mdnsresponder/lib/libdns_sd.dylib|/usr/lib/libdns_sd.dylib|userland/mdnsresponder/build_mdnsresponder.sh|Bonjour smoke|always|DNS-SD client library
+file|optional|rootfs/usr/libexec/start_mdnsresponder.sh|/usr/libexec/start_mdnsresponder.sh|source tree|Bonjour smoke|always|Panthera launch wrapper waits for loopback before TCP-loopback IPC bind
+file|optional|rootfs/System/Library/LaunchDaemons/com.apple.mDNSResponder.plist|/System/Library/LaunchDaemons/com.apple.mDNSResponder.plist|source tree|Bonjour smoke|always|mDNSResponder launch daemon

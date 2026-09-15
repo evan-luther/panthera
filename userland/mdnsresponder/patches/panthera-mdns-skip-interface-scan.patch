@@ -1,0 +1,18 @@
+--- mDNSPosix/mDNSPosix.c
++++ mDNSPosix/mDNSPosix.c
+@@ -1460,6 +1460,15 @@ mDNSlocal int SetupInterfaceList(mDNS *const m)
+     assert(m != NULL);
+     debugf("SetupInterfaceList");
+ 
++#if PANTHERA_MDNS_SKIP_INTERFACE_SCAN
++    (void)foundav4;
++    (void)intfList;
++    (void)firstLoopback;
++    (void)firstLoopbackIndex;
++    LogMsg("PANTHERA:mDNSResponder SetupInterfaceList skipped");
++    return mStatus_NoError;
++#endif
++
+     if (getifaddrs(&intfList) < 0)
+     {
+         err = errno;

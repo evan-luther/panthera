@@ -1,0 +1,24 @@
+--- a/IOATABusCommand.cpp	2026-08-29 22:44:01.842676546 -0400
++++ b/IOATABusCommand.cpp	2026-09-07 19:12:11.248028693 -0400
+@@ -223,15 +223,17 @@
+ 
+ 	if(_callback != 0L)
+ 	{
+-		 (*_callback)(this);
++		IOATACompletionFunction* cb = _callback;
++		_callback = 0L;
++		(*cb)(this);
+ 
+ 	} else if( syncer != 0L ) {
+ 	
+-		syncer->signal();
+-		syncer = 0L;
++		IOSyncer* s = syncer;
++		syncer = 0L;
++		s->signal(kIOReturnSuccess, false);
+ 	
+ 	}
+-
+ 
+ }
+ 

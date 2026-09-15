@@ -1,0 +1,168 @@
+#!/usr/bin/expect -f
+# Shell functionality tests for Panthera — v3 (post-fix verification)
+
+set timeout 90
+log_file -noappend /Users/admin/panthera/tests/shell_tests3.log
+
+spawn env PANTHERA_NOGRAPHIC=1 /Users/admin/panthera/boot/qemu/run_phase2_qemu.sh \
+    --no-reboot --ssh-port 0 \
+    --root-disk /Users/admin/panthera/images/qemu/panthera-root.img
+
+# Wait for the shell prompt
+expect {
+    -re {(%|#)\s*$} {
+        send_user "\n>>> GOT PROMPT <<<\n"
+    }
+    timeout {
+        send_user "\n>>> TIMEOUT waiting for prompt <<<\n"
+        exit 1
+    }
+}
+sleep 3
+
+# ============================================================
+send_user "\n========== TEST 1: Pipes ==========\n"
+send "ls /bin | head -5\r"
+expect {
+    -re {(%|#)\s*$} { send_user ">>> T1a done <<<\n" }
+    timeout { send_user ">>> T1a TIMEOUT <<<\n" }
+}
+
+send "echo hello | cat\r"
+expect {
+    -re {hello} { send_user ">>> T1b PASS <<<\n" }
+    timeout { send_user ">>> T1b TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+# ============================================================
+send_user "\n========== TEST 2: Redirection ==========\n"
+send "echo hello > /tmp/test && cat /tmp/test\r"
+expect {
+    -re {hello} { send_user ">>> T2 PASS <<<\n" }
+    -re {read-only} { send_user ">>> T2 FAIL: still read-only <<<\n" }
+    timeout { send_user ">>> T2 TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+# Also test /var/root
+send "echo world > /var/root/test && cat /var/root/test\r"
+expect {
+    -re {world} { send_user ">>> T2b PASS <<<\n" }
+    timeout { send_user ">>> T2b TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+# ============================================================
+send_user "\n========== TEST 3: Ctrl+C ==========\n"
+send "sleep 999\r"
+sleep 3
+send "\x03"
+expect {
+    -re {(%|#)\s*$} {
+        send_user ">>> T3 PASS: Ctrl+C worked <<<\n"
+    }
+    timeout {
+        send_user ">>> T3 FAIL: Ctrl+C didn't interrupt <<<\n"
+        # Try to recover
+        send "\x03"
+        sleep 1
+        send "\x03"
+        expect -re {(%|#)\s*$}
+    }
+}
+
+# ============================================================
+send_user "\n========== TEST 4: /dev/null ==========\n"
+send "ls > /dev/null && echo DEVNULL_OK\r"
+expect {
+    -re {DEVNULL_OK} { send_user ">>> T4 PASS <<<\n" }
+    timeout { send_user ">>> T4 TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+# ============================================================
+send_user "\n========== TEST 5: Globbing ==========\n"
+send "ls /bin/z*\r"
+expect {
+    -re {/bin/zsh} { send_user ">>> T5 PASS <<<\n" }
+    timeout { send_user ">>> T5 TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+# ============================================================
+send_user "\n========== TEST 6: Coreutils traces ==========\n"
+send "whoami 2>&1\r"
+expect {
+    -re {main enter|argc=|probe|trace} {
+        send_user ">>> T6a FAIL: debug traces still present <<<\n"
+    }
+    -re {root\r} {
+        send_user ">>> T6a PASS: clean whoami output <<<\n"
+    }
+    timeout { send_user ">>> T6a TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+send "id 2>&1\r"
+expect {
+    -re {main enter|argc=|probe|trace} {
+        send_user ">>> T6b FAIL: debug traces still present <<<\n"
+    }
+    -re {uid=0} {
+        send_user ">>> T6b PASS: clean id output <<<\n"
+    }
+    timeout { send_user ">>> T6b TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+# Also test echo for traces
+send "echo testing123 2>&1\r"
+expect {
+    -re {main enter|argc=|probe} {
+        send_user ">>> T6c FAIL: echo has debug traces <<<\n"
+    }
+    -re {testing123} {
+        send_user ">>> T6c PASS: clean echo output <<<\n"
+    }
+    timeout { send_user ">>> T6c TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+# ============================================================
+send_user "\n========== TEST 7: Command substitution ==========\n"
+send "echo \"I am \$(whoami)\"\r"
+expect {
+    -re {I am root} { send_user ">>> T7 PASS <<<\n" }
+    timeout { send_user ">>> T7 TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+# ============================================================
+send_user "\n========== TEST 8: Background jobs ==========\n"
+send "sleep 10 &\r"
+sleep 2
+expect {
+    -re {(%|#)\s*$} { send_user ">>> T8a got prompt <<<\n" }
+    timeout { send_user ">>> T8a TIMEOUT <<<\n" }
+}
+
+send "jobs\r"
+expect {
+    -re {sleep} { send_user ">>> T8b PASS: sleep in jobs <<<\n" }
+    timeout { send_user ">>> T8b TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+# ============================================================
+send_user "\n========== ALL TESTS COMPLETE ==========\n"
+send "echo DONE\r"
+expect -re {DONE}
+sleep 1
+
+# Quit QEMU
+send "\x01"
+sleep 0.5
+send "x"
+sleep 2
+exit 0

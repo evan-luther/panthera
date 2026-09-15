@@ -1,0 +1,123 @@
+--- monitor.c.orig
++++ monitor.c
+@@ -111,5 +111,35 @@
+ /* Functions on the monitor that answer unprivileged requests */
+ 
++#ifdef PANTHERA
++static void
++panthera_monitor_tracef(const char *fmt, ...)
++{
++	char buf[256];
++	va_list ap;
++	int fd;
++
++	va_start(ap, fmt);
++	(void)vsnprintf(buf, sizeof(buf), fmt, ap);
++	va_end(ap);
++	buf[sizeof(buf) - 1] = '\0';
++
++	(void)write(STDERR_FILENO, buf, strlen(buf));
++	(void)write(STDERR_FILENO, "\n", 1);
++	fd = open("/dev/console", O_WRONLY);
++	if (fd >= 0) {
++		(void)write(fd, buf, strlen(buf));
++		(void)write(fd, "\n", 1);
++		(void)close(fd);
++	}
++}
++#else
++static void
++panthera_monitor_tracef(const char *fmt, ...)
++{
++	(void)fmt;
++}
++#endif
++
+ int mm_answer_moduli(struct ssh *, int, struct sshbuf *);
+ int mm_answer_sign(struct ssh *, int, struct sshbuf *);
+ int mm_answer_pwnamallow(struct ssh *, int, struct sshbuf *);
+@@ -269,6 +300,9 @@
+ 	struct mon_table *ent;
+ 	int authenticated = 0, partial = 0;
+ 
++	panthera_monitor_tracef("PANTHERA:sshd monitor_preauth enter self=%ld child=%ld send=%d log=%d",
++	    (long)getpid(), (long)pmonitor->m_pid, pmonitor->m_sendfd,
++	    pmonitor->m_log_recvfd);
+ 	debug3("preauth child monitor started");
+ 
+ 	if (pmonitor->m_recvfd >= 0)
+@@ -296,7 +330,9 @@
+ 		auth2_authctxt_reset_info(authctxt);
+ 
+ 		authenticated = (monitor_read(ssh, pmonitor,
+ 		    mon_dispatch, &ent) == 1);
++		panthera_monitor_tracef("PANTHERA:sshd monitor_preauth read authenticated=%d ent=%d self=%ld",
++		    authenticated, ent != NULL ? ent->type : -1, (long)getpid());
+ 
+ 		/* Special handling for multiple required authentications */
+ 		if (options.num_auth_methods != 0) {
+@@ -354,6 +392,8 @@
+ 	ssh->authctxt = NULL;
+ 	ssh_packet_set_log_preamble(ssh, "user %s", authctxt->user);
+ 
++	panthera_monitor_tracef("PANTHERA:sshd monitor_preauth get_keystate self=%ld",
++	    (long)getpid());
+ 	mm_get_keystate(ssh, pmonitor);
+ 
+ 	/* Drain any buffered messages from the child */
+@@ -366,6 +406,8 @@
+ 	if (pmonitor->m_log_sendfd >= 0)
+ 		close(pmonitor->m_log_sendfd);
+ 	pmonitor->m_sendfd = pmonitor->m_log_recvfd = -1;
++	panthera_monitor_tracef("PANTHERA:sshd monitor_preauth return self=%ld",
++	    (long)getpid());
+ }
+ 
+ static void
+@@ -476,19 +518,26 @@
+ 	struct pollfd pfd[2];
+ 
+ 	for (;;) {
+ 		memset(&pfd, 0, sizeof(pfd));
+ 		pfd[0].fd = pmonitor->m_sendfd;
+ 		pfd[0].events = POLLIN;
+ 		pfd[1].fd = pmonitor->m_log_recvfd;
+ 		pfd[1].events = pfd[1].fd == -1 ? 0 : POLLIN;
+-		if (poll(pfd, pfd[1].fd == -1 ? 1 : 2, -1) == -1) {
++		panthera_monitor_tracef("PANTHERA:sshd monitor_read poll enter self=%ld send=%d log=%d",
++		    (long)getpid(), pfd[0].fd, pfd[1].fd);
++		r = poll(pfd, pfd[1].fd == -1 ? 1 : 2, -1);
++		panthera_monitor_tracef("PANTHERA:sshd monitor_read poll ret=%d errno=%d self=%ld rev0=0x%x rev1=0x%x",
++		    r, errno, (long)getpid(), pfd[0].revents, pfd[1].revents);
++		if (r == -1) {
+ 			if (errno == EINTR || errno == EAGAIN)
+ 				continue;
+ 			fatal_f("poll: %s", strerror(errno));
+ 		}
+ 		if (pfd[1].revents) {
++			panthera_monitor_tracef("PANTHERA:sshd monitor_read log ready self=%ld rev=0x%x",
++			    (long)getpid(), pfd[1].revents);
+ 			/*
+ 			 * Drain all log messages before processing next
+ 			 * monitor request.
+ 			 */
+ 			monitor_read_log(pmonitor);
+@@ -501,7 +555,9 @@
+ 
+ 	mm_request_receive(pmonitor->m_sendfd, m);
+ 	if ((r = sshbuf_get_u8(m, &type)) != 0)
+ 		fatal_fr(r, "parse type");
++	panthera_monitor_tracef("PANTHERA:sshd monitor_read type=%u self=%ld",
++	    (unsigned)type, (long)getpid());
+ 
+ 	debug3_f("checking request %d", type);
+ 
+@@ -516,6 +572,8 @@
+ 			fatal_f("unpermitted request %d", type);
+ 		ret = (*ent->f)(ssh, pmonitor->m_sendfd, m);
+ 		sshbuf_free(m);
++		panthera_monitor_tracef("PANTHERA:sshd monitor_read handled type=%u ret=%d self=%ld",
++		    (unsigned)type, ret, (long)getpid());
+ 
+ 		/* The child may use this request only once, disable it */
+ 		if (ent->flags & MON_ONCE) {

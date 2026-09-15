@@ -1,0 +1,29 @@
+--- openbsd-compat/openssl-compat.c.orig
++++ openbsd-compat/openssl-compat.c
+@@ -61,6 +61,26 @@
+ void
+ ssh_libcrypto_init(void)
+ {
++#ifdef PANTHERA
++# if defined(HAVE_OPENSSL_INIT_CRYPTO) && \
++      defined(OPENSSL_INIT_ADD_ALL_CIPHERS) && \
++      defined(OPENSSL_INIT_ADD_ALL_DIGESTS) && \
++      defined(OPENSSL_INIT_NO_LOAD_CONFIG) && \
++      defined(OPENSSL_INIT_ATFORK)
++	OPENSSL_init_crypto(OPENSSL_INIT_ADD_ALL_CIPHERS |
++	    OPENSSL_INIT_ADD_ALL_DIGESTS | OPENSSL_INIT_NO_LOAD_CONFIG |
++	    OPENSSL_INIT_ATFORK, NULL);
++# elif defined(HAVE_OPENSSL_INIT_CRYPTO) && \
++      defined(OPENSSL_INIT_ADD_ALL_CIPHERS) && \
++      defined(OPENSSL_INIT_ADD_ALL_DIGESTS) && \
++      defined(OPENSSL_INIT_NO_LOAD_CONFIG)
++	OPENSSL_init_crypto(OPENSSL_INIT_ADD_ALL_CIPHERS |
++	    OPENSSL_INIT_ADD_ALL_DIGESTS | OPENSSL_INIT_NO_LOAD_CONFIG, NULL);
++# elif defined(HAVE_OPENSSL_ADD_ALL_ALGORITHMS)
++	OpenSSL_add_all_algorithms();
++# endif
++	return;
++#endif
+ #if defined(HAVE_OPENSSL_INIT_CRYPTO) && \
+       defined(OPENSSL_INIT_ADD_ALL_CIPHERS) && \
+       defined(OPENSSL_INIT_ADD_ALL_DIGESTS)

@@ -1,0 +1,83 @@
+--- sshd.c.orig	2026-05-18 19:00:29
++++ sshd.c	2026-05-18 19:00:29
+@@ -1618,32 +1618,56 @@
+ 	panthera_sshd_trace("PANTHERA:sshd main enter");
+ #endif
+ 	__progname = ssh_get_progname(av[0]);
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd progname returned");
++#endif
+ 
+ 	sigemptyset(&sigmask);
+ 	sigprocmask(SIG_SETMASK, &sigmask, NULL);
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd sigmask reset returned");
++#endif
+ 
+ 	/* Save argv. Duplicate so setproctitle emulation doesn't clobber it */
+ 	saved_argc = ac;
+ 	rexec_argc = ac;
+ 	saved_argv = xcalloc(ac + 1, sizeof(*saved_argv));
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd argv alloc returned");
++#endif
+ 	for (i = 0; (int)i < ac; i++)
+ 		saved_argv[i] = xstrdup(av[i]);
+ 	saved_argv[i] = NULL;
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd argv copy returned");
++#endif
+ 
+ #ifndef HAVE_SETPROCTITLE
+ 	/* Prepare for later setproctitle emulation */
+ 	compat_init_setproctitle(ac, av);
+ 	av = saved_argv;
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd setproctitle init returned");
+ #endif
++#endif
+ 
+ 	if (geteuid() == 0 && setgroups(0, NULL) == -1)
+ 		debug("setgroups(): %.200s", strerror(errno));
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd early setgroups returned");
++#endif
+ 
+ 	/* Ensure that fds 0, 1 and 2 are open or directed to /dev/null */
+ 	sanitise_stdfd();
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd sanitise_stdfd returned");
++#endif
+ 
+ 	/* Initialize configuration options to their default values. */
+ 	initialize_server_options(&options);
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd initialize options returned");
++#endif
+ 
+ 	/* Parse command-line arguments. */
+ 	while ((opt = getopt(ac, av,
+@@ -1760,14 +1784,23 @@
+ 			break;
+ 		}
+ 	}
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd getopt loop returned");
++#endif
+ 	if (rexeced_flag || inetd_flag)
+ 		rexec_flag = 0;
+ 	if (!test_flag && !do_dump_cfg && rexec_flag && !path_absolute(av[0]))
+ 		fatal("sshd re-exec requires execution with an absolute path");
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd before closefrom");
++#endif
+ 	if (rexeced_flag)
+ 		closefrom(REEXEC_MIN_FREE_FD);
+ 	else
+ 		closefrom(REEXEC_DEVCRYPTO_RESERVED_FD);
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd closefrom returned");
++#endif
+ 
+ #ifdef PANTHERA
+ 	panthera_sshd_trace("PANTHERA:sshd seed_rng enter");

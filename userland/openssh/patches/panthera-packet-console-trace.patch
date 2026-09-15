@@ -1,0 +1,50 @@
+--- packet.c	2024-03-11 01:20:49
++++ packet.c	2026-05-23 16:00:00
+@@ -96,6 +96,31 @@
+ #include "packet.h"
+ #include "ssherr.h"
+ #include "sshbuf.h"
+ 
++#include <fcntl.h>
++#ifdef PANTHERA
++static void
++panthera_packet_tracef(const char *fmt, ...)
++{
++	char buf[256];
++	va_list ap;
++	int fd;
++
++	va_start(ap, fmt);
++	(void)vsnprintf(buf, sizeof(buf), fmt, ap);
++	va_end(ap);
++	buf[sizeof(buf) - 1] = '\0';
++
++	fd = open("/dev/console", O_WRONLY | O_NONBLOCK);
++	if (fd >= 0) {
++		(void)write(fd, buf, strlen(buf));
++		(void)write(fd, "\n", 1);
++		(void)close(fd);
++	}
++}
++#else
++#define panthera_packet_tracef(...) do { } while (0)
++#endif
++
+ #ifdef PACKET_DEBUG
+ #define DBG(x) x
+@@ -1823,7 +1848,14 @@
+ 	int r;
+ 	size_t rlen;
+ 
+-	if ((r = sshbuf_read(fd, state->input, PACKET_MAX_SIZE, &rlen)) != 0)
++	panthera_packet_tracef("PANTHERA:packet process_read enter fd=%d ilen=%zu",
++	    fd, sshbuf_len(state->input));
++	if ((r = sshbuf_read(fd, state->input, PACKET_MAX_SIZE, &rlen)) != 0) {
++		panthera_packet_tracef("PANTHERA:packet process_read ret=%d errno=%d rlen=%zu ilen=%zu",
++		    r, errno, rlen, sshbuf_len(state->input));
+ 		return r;
++	}
++	panthera_packet_tracef("PANTHERA:packet process_read ok rlen=%zu ilen=%zu",
++	    rlen, sshbuf_len(state->input));
+ 
+ 	if (state->packet_discard) {

@@ -1,0 +1,10 @@
+#ifndef PANTHERA_LIBINFO_DISPATCH_PRIVATE_H
+#define PANTHERA_LIBINFO_DISPATCH_PRIVATE_H
+
+#include <dispatch/dispatch.h>
+
+#ifndef DISPATCH_QUEUE_OVERCOMMIT
+#define DISPATCH_QUEUE_OVERCOMMIT 0x2ull
+#endif
+
+#endif

@@ -1,0 +1,125 @@
+#!/usr/bin/expect -f
+# Focused shell tests — v4
+
+set timeout 90
+log_file -noappend /Users/admin/panthera/tests/shell_tests4.log
+
+spawn env PANTHERA_NOGRAPHIC=1 /Users/admin/panthera/boot/qemu/run_phase2_qemu.sh \
+    --no-reboot --ssh-port 0 \
+    --root-disk /Users/admin/panthera/images/qemu/panthera-root.img
+
+expect {
+    -re {(%|#)\s*$} { send_user "\n>>> GOT PROMPT <<<\n" }
+    timeout { send_user "\n>>> TIMEOUT <<<\n"; exit 1 }
+}
+sleep 2
+
+# T1: Pipes (expect pass)
+send_user "\n=== T1: Pipes ===\n"
+send "echo hello | cat\r"
+expect {
+    -re {hello\r?\n.*(%|#)} { send_user ">>> T1 PASS <<<\n" }
+    timeout { send_user ">>> T1 TIMEOUT <<<\n" }
+}
+
+# T2: Redirection (expect fail - read-only FS)
+send_user "\n=== T2: Redirection ===\n"
+send "echo hello > /tmp/test 2>&1; echo REDIR_RC=\$?\r"
+expect {
+    -re {REDIR_RC=0} { send_user ">>> T2 PASS <<<\n" }
+    -re {read-only.*REDIR_RC=1} { send_user ">>> T2 FAIL: read-only FS (known) <<<\n" }
+    -re {REDIR_RC=} { send_user ">>> T2 FAIL <<<\n" }
+    timeout { send_user ">>> T2 TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+# T3: Ctrl+C — use a zsh builtin loop, not sleep
+send_user "\n=== T3: Ctrl+C ===\n"
+send "while true; do :; done\r"
+sleep 3
+send "\x03"
+expect {
+    -re {(%|#)\s*$} { send_user ">>> T3 PASS: Ctrl+C worked <<<\n" }
+    timeout {
+        send_user ">>> T3 FAIL: still running <<<\n"
+        send "\x03\x03\x03"
+        sleep 1
+        send "q\r"
+        expect -re {(%|#)\s*$}
+    }
+}
+
+# T4: /dev/null (expect pass)
+send_user "\n=== T4: /dev/null ===\n"
+send "ls > /dev/null && echo DEVNULL_OK\r"
+expect {
+    -re {DEVNULL_OK} { send_user ">>> T4 PASS <<<\n" }
+    timeout { send_user ">>> T4 TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+# T5: Globbing
+send_user "\n=== T5: Globbing ===\n"
+send "echo /bin/z*\r"
+expect {
+    -re {/bin/zsh} { send_user ">>> T5 PASS <<<\n" }
+    timeout { send_user ">>> T5 TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+# T6: Coreutils traces
+send_user "\n=== T6: Coreutils traces ===\n"
+send "whoami 2>&1\r"
+expect {
+    -re {main enter|argc=|probe} { send_user ">>> T6a FAIL: traces <<<\n" }
+    -re {root\r?\n} { send_user ">>> T6a PASS: clean <<<\n" }
+    timeout { send_user ">>> T6a TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+send "id 2>&1\r"
+expect {
+    -re {main enter|argc=|probe} { send_user ">>> T6b FAIL: traces <<<\n" }
+    -re {uid=0} { send_user ">>> T6b PASS: clean <<<\n" }
+    timeout { send_user ">>> T6b TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+send "/bin/echo testing123 2>&1\r"
+expect {
+    -re {main enter|argc=|probe} { send_user ">>> T6c FAIL: traces <<<\n" }
+    -re {testing123} { send_user ">>> T6c PASS: clean <<<\n" }
+    timeout { send_user ">>> T6c TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+# T7: Command substitution
+send_user "\n=== T7: Command substitution ===\n"
+send "echo \"I am \$(whoami)\"\r"
+expect {
+    -re {I am root} { send_user ">>> T7 PASS <<<\n" }
+    timeout { send_user ">>> T7 TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+# T8: Background jobs (use zsh builtin)
+send_user "\n=== T8: Background jobs ===\n"
+send "{ while true; do :; done } &\r"
+sleep 2
+send "jobs 2>&1\r"
+expect {
+    -re {running|while} { send_user ">>> T8 PASS <<<\n" }
+    timeout { send_user ">>> T8 TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+# Kill bg job
+send "kill %1 2>/dev/null\r"
+expect -re {(%|#)\s*$}
+
+send_user "\n=== ALL DONE ===\n"
+sleep 1
+send "\x01"
+sleep 0.5
+send "x"
+sleep 2
+exit 0

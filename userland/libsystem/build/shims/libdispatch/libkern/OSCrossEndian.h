@@ -1,0 +1,6 @@
+#ifndef _PANTHERA_LIBDISPATCH_OSCROSSENDIAN_H
+#define _PANTHERA_LIBDISPATCH_OSCROSSENDIAN_H
+
+#include <libkern/OSCrossEndian.h>
+
+#endif

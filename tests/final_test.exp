@@ -1,0 +1,98 @@
+#!/usr/bin/expect -f
+set timeout 90
+
+spawn env PANTHERA_NOGRAPHIC=1 /Users/admin/panthera/boot/qemu/run_phase2_qemu.sh \
+    --no-reboot --ssh-port 0 \
+    --root-disk /Users/admin/panthera/images/qemu/panthera-root.img
+
+expect -re {(%|#)\s*$}
+sleep 2
+
+# T1: Pipes
+send_user "\n=== T1 ===\n"
+send "echo pipe_test | cat\r"
+expect -re {pipe_test}
+send_user "PASS\n"
+expect -re {(%|#)\s*$}
+
+# T3: Ctrl+C (cat is an external cmd, gets properly interrupted)
+send_user "\n=== T3 ===\n"
+send "cat\r"
+sleep 2
+send "\x03"
+expect {
+    -re {(%|#)\s*$} { send_user "PASS\n" }
+    timeout { send_user "FAIL\n" }
+}
+
+# T4: /dev/null
+send_user "\n=== T4 ===\n"
+send "ls > /dev/null && echo OK4\r"
+expect -re {OK4}
+send_user "PASS\n"
+expect -re {(%|#)\s*$}
+
+# T5: Globbing
+send_user "\n=== T5 ===\n"
+send "echo /bin/z*\r"
+expect -re {/bin/zsh}
+send_user "PASS\n"
+expect -re {(%|#)\s*$}
+
+# T6: Coreutils traces
+send_user "\n=== T6a whoami ===\n"
+send "whoami\r"
+expect {
+    -re {main enter|argc=|probe} { send_user "FAIL traces\n" }
+    -re {root\r?\n} { send_user "PASS clean\n" }
+    timeout { send_user "TIMEOUT\n" }
+}
+expect -re {(%|#)\s*$}
+
+send_user "\n=== T6b id ===\n"
+send "id\r"
+expect {
+    -re {main enter|argc=|probe} { send_user "FAIL traces\n" }
+    -re {uid=0\(root\)} { send_user "PASS clean\n" }
+    timeout { send_user "TIMEOUT\n" }
+}
+expect -re {(%|#)\s*$}
+
+send_user "\n=== T6c echo ===\n"
+send "/bin/echo trace_check\r"
+expect {
+    -re {main enter|argc=|probe} { send_user "FAIL traces\n" }
+    -re {trace_check\r?\n} { send_user "PASS clean\n" }
+    timeout { send_user "TIMEOUT\n" }
+}
+expect -re {(%|#)\s*$}
+
+# T7: Command substitution
+send_user "\n=== T7 ===\n"
+send "echo \"I am \$(whoami)\"\r"
+expect {
+    -re {I am root} { send_user "PASS\n" }
+    timeout { send_user "TIMEOUT\n" }
+}
+expect -re {(%|#)\s*$}
+
+# T8: Background jobs
+send_user "\n=== T8 ===\n"
+send "cat /dev/zero > /dev/null &\r"
+sleep 2
+send "jobs\r"
+expect {
+    -re {cat|running} { send_user "PASS\n" }
+    timeout { send_user "TIMEOUT\n" }
+}
+expect -re {(%|#)\s*$}
+send "kill %1 2>/dev/null\r"
+expect -re {(%|#)\s*$}
+
+send_user "\n=== ALL DONE ===\n"
+sleep 1
+send "\x01"
+sleep 0.5
+send "x"
+sleep 2
+exit 0

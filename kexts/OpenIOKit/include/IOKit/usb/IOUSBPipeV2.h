@@ -1,0 +1,6 @@
+#ifndef PANTHERA_FORWARD_IOKIT_USB_IOUSBPIPEV2_H
+#define PANTHERA_FORWARD_IOKIT_USB_IOUSBPIPEV2_H
+
+#include "../../../../src/IOUSBFamily-630.4.5/IOUSBFamily/Headers/IOUSBPipeV2.h"
+
+#endif

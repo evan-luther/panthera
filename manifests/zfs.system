@@ -1,0 +1,15 @@
+# Panthera ZFS rootfs manifest
+# Format: kind|required|source|destination|producer|verification|condition|note
+# kind: file, dir, glob, generated
+
+file|optional|userland/zfs/sbin/zsysctl|/usr/sbin/zsysctl|userland/zfs/build_zfs_userland.sh|ZFS sysctl smoke|always|OpenZFS macOS sysctl utility for querying ZFS kext state
+file|optional|userland/zfs/sbin/zpool|/sbin/zpool|userland/zfs/build_zfs_userland.sh|ZFS tool smoke|always|OpenZFS zpool administration utility
+file|optional|userland/zfs/sbin/zfs|/sbin/zfs|userland/zfs/build_zfs_userland.sh|ZFS tool smoke|always|OpenZFS dataset administration utility
+file|required|userland/zfs/sbin/mount_zfs|/sbin/mount_zfs|userland/zfs/build_zfs_userland.sh|mount -t zfs legacy dataset smoke|always|OpenZFS mount helper for Darwin mount
+file|optional|userland/mount_tools/sbin/umount|/sbin/umount|userland/mount_tools/build_mount_tools.sh|ZFS boot smoke|always|Darwin unmount utility for mounted filesystem cleanup
+file|optional|userland/mount_tools/sbin/panthera_zfs_hybrid_mount|/sbin/panthera_zfs_hybrid_mount|userland/mount_tools/build_mount_tools.sh|ZFS hybrid smoke|always|Early launchd-invoked helper that imports and mounts hybrid ZFS state datasets
+file|optional|rootfs/etc/panthera/zfs-hybrid.conf|/etc/panthera/zfs-hybrid.conf|source tree|ZFS hybrid smoke|PANTHERA_STAGE_ZFS_HYBRID=1|Opt-in pool and dataset config for Z5 hybrid state boot
+generated|optional|rootfs/Library/Preferences/SystemConfiguration/preferences.plist|/System/Library/PantheraSeed/Library/Preferences/SystemConfiguration/preferences.plist|rootfs/scripts/stage_package_payload.sh|ZFS hybrid smoke|PANTHERA_STAGE_ZFS_HYBRID=1|Seed copy used when ZFS /Library is mounted before configd reads preferences
+file|optional|userland/diskarbitration/lib/libDiskArbitration.dylib|/usr/lib/libDiskArbitration.dylib|userland/diskarbitration/build_diskarbitration.sh|ZFS tool smoke|always|Darwin DiskArbitration framework surface used by OpenZFS macOS userland
+generated|optional|userland/diskarbitration/lib/libDiskArbitration.dylib|/System/Library/Frameworks/DiskArbitration.framework/DiskArbitration|rootfs/scripts/stage_package_payload.sh|ZFS tool smoke|always|DiskArbitration framework compatibility symlink
+file|optional|tests/test_pthread_detached|/usr/bin/test_pthread_detached|tools/build_pthread_detached_probe.sh|ZFS boot smoke|always|Detached pthread probe matching OpenZFS libtpool worker creation

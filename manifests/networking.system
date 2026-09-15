@@ -1,0 +1,18 @@
+# Panthera networking rootfs manifest
+# Format: kind|required|source|destination|producer|verification|condition|note
+# kind: file, dir, glob, generated
+
+file|required|userland/network_tools/bin/netbringup|/sbin/netbringup|userland/network_tools/build_network_tools.sh|boot and network smoke|always|stable static network bring-up
+file|required|userland/network_tools/bin/ifconfig|/sbin/ifconfig|userland/network_tools/build_network_tools.sh|network smoke|always|interface inspection
+glob|optional|userland/network_tools/bin/*|/sbin/|userland/network_tools/build_network_tools.sh|network smoke|always|additional network tools
+file|optional|userland/curl/bin/curl|/usr/bin/curl|userland/curl/build_curl.sh|curl smoke|always|HTTP client
+file|optional|userland/curl/lib/libcurl.4.dylib|/usr/lib/libcurl.4.dylib|userland/curl/build_curl.sh|curl smoke|always|curl runtime library
+generated|optional|userland/curl/lib/libcurl.4.dylib|/usr/lib/libcurl.dylib|rootfs/scripts/stage_base_payload.sh|curl smoke|always|curl runtime compatibility symlink
+file|optional|userland/openssl/bin/openssl|/usr/bin/openssl|userland/openssl/build_openssl.sh|TLS smoke|always|OpenSSL CLI
+file|optional|userland/openssl/lib/libcrypto.3.dylib|/usr/lib/libcrypto.3.dylib|userland/openssl/build_openssl.sh|TLS smoke|always|OpenSSL crypto library
+generated|optional|userland/openssl/lib/libcrypto.3.dylib|/usr/lib/libcrypto.dylib|rootfs/scripts/stage_base_payload.sh|TLS smoke|always|OpenSSL crypto compatibility symlink
+file|optional|userland/openssl/lib/libssl.3.dylib|/usr/lib/libssl.3.dylib|userland/openssl/build_openssl.sh|TLS smoke|always|OpenSSL SSL library
+generated|optional|userland/openssl/lib/libssl.3.dylib|/usr/lib/libssl.dylib|rootfs/scripts/stage_base_payload.sh|TLS smoke|always|OpenSSL SSL compatibility symlink
+dir|optional|userland/openssl/lib/ossl-modules|/usr/lib/ossl-modules/|userland/openssl/build_openssl.sh|TLS smoke|always|OpenSSL provider modules
+file|optional|userland/openssl/etc/ssl/openssl.cnf|/etc/ssl/openssl.cnf|userland/openssl/build_openssl.sh|TLS smoke|always|OpenSSL config
+file|optional|rootfs/etc/ssl/cacert.pem|/etc/ssl/cert.pem,/etc/ssl/certs/ca-certificates.crt|source tree|TLS smoke|always|CA certificate bundle

@@ -1,0 +1,122 @@
+--- CFURLAccess.c.orig
++++ CFURLAccess.c
+@@ -109,6 +109,97 @@
+ 
+ //#warning CF:For the moment file access failures are ill defined and set the error code to kCFURLUnknownError
+ 
++#ifdef PANTHERA
++#include <errno.h>
++
++static Boolean _CFFileURLPantheraGetPath(CFURLRef url, char *path, CFIndex pathSize) {
++    CFURLRef absoluteURL = NULL;
++    CFURLRef effectiveURL = url;
++    CFStringRef pathString = NULL;
++    Boolean result = false;
++
++    if (!url || !path || pathSize <= 0) {
++        return false;
++    }
++
++    if (CFURLGetBaseURL(url)) {
++        absoluteURL = CFURLCopyAbsoluteURL(url);
++        if (!absoluteURL) {
++            return false;
++        }
++        effectiveURL = absoluteURL;
++    }
++
++    pathString = CFURLCopyFileSystemPath(effectiveURL, kCFURLPOSIXPathStyle);
++    if (pathString) {
++        result = CFStringGetFileSystemRepresentation(pathString, path, pathSize);
++        CFRelease(pathString);
++    }
++    if (absoluteURL) {
++        CFRelease(absoluteURL);
++    }
++
++    return result;
++}
++
++static CFDataRef _CFFileURLPantheraCreateData(CFAllocatorRef alloc, CFURLRef url) {
++    char path[CFMaxPathSize];
++    struct stat st;
++    UInt8 *bytes = NULL;
++    off_t done = 0;
++    int fd;
++    CFDataRef data;
++
++    if (!_CFFileURLPantheraGetPath(url, path, sizeof(path))) {
++        return NULL;
++    }
++
++    fd = open(path, O_RDONLY);
++    if (fd < 0) {
++        return NULL;
++    }
++
++    if (fstat(fd, &st) != 0 || S_ISDIR(st.st_mode) || st.st_size < 0 || st.st_size > (off_t)0x7fffffff) {
++        close(fd);
++        return NULL;
++    }
++
++    if (st.st_size > 0) {
++        bytes = (UInt8 *)malloc((size_t)st.st_size);
++        if (!bytes) {
++            close(fd);
++            return NULL;
++        }
++
++        while (done < st.st_size) {
++            ssize_t got = read(fd, bytes + done, (size_t)(st.st_size - done));
++            if (got < 0) {
++                if (errno == EINTR || errno == EAGAIN) {
++                    continue;
++                }
++                free(bytes);
++                close(fd);
++                return NULL;
++            }
++            if (got == 0) {
++                free(bytes);
++                close(fd);
++                return NULL;
++            }
++            done += got;
++        }
++    }
++
++    close(fd);
++    data = CFDataCreate(alloc, bytes, (CFIndex)st.st_size);
++    if (bytes) {
++        free(bytes);
++    }
++
++    return data;
++}
++#endif
++
+ static CFDictionaryRef _CFFileURLCreatePropertiesFromResource(CFAllocatorRef alloc, CFURLRef url, CFArrayRef desiredProperties, SInt32 *errorCode) {
+     // MF:!!! This could/should be changed to use _CFGetFileProperties() to do the actual figuring.
+     static CFArrayRef _allProps = NULL;
+@@ -278,6 +369,13 @@
+ 
+     if (errorCode) *errorCode = 0;
+     if (fetchedData) {
++#ifdef PANTHERA
++        *fetchedData = _CFFileURLPantheraCreateData(alloc, url);
++        if (!*fetchedData) {
++            if (errorCode) *errorCode = kCFURLUnknownError;
++            success = false;
++        }
++#else
+         void *bytes;
+         CFIndex length;
+         Boolean releaseAlloc = false;
+@@ -299,6 +397,7 @@
+             // Now the CFData should be hanging on to it.
+             CFRelease(alloc);
+         }
++#endif
+     }
+ 
+     if (fetchedProperties) {

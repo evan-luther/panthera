@@ -1,0 +1,212 @@
+PANTHERA_ROOT ?= $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../../..)
+PANTHERA ?= $(PANTHERA_ROOT)
+BUILDDIR ?= $(PANTHERA)/userland/libsystem/build
+SRCDIR   ?= $(PANTHERA)/src/libpthread-519
+SYSROOT  ?= $(BUILDDIR)/sysroot
+OBJDIR   ?= $(BUILDDIR)/obj/libsystem_pthread
+OUTDIR   ?= $(BUILDDIR)/sysroot/usr/lib/system
+SDK      = $(shell xcrun -sdk macosx --show-sdk-path)
+TARGET   = x86_64-apple-darwin23.0
+BUILD_STUB_BINDER ?= $(BUILDDIR)/build_stub_binder.sh
+DYLD_STUB = $(BUILDDIR)/obj/dyld_stub_binder.o
+
+CC = clang
+
+SHIMDIR = $(OBJDIR)/shims
+TRACKED_SHIMDIR = $(BUILDDIR)/shims/libsystem_pthread
+
+CFLAGS = \
+	-target $(TARGET) \
+	-std=gnu11 \
+	-fPIC -O2 \
+	-include $(TRACKED_SHIMDIR)/availability_stub.h \
+	-I$(TRACKED_SHIMDIR) \
+	-I$(SRCDIR)/include \
+	-I$(SRCDIR)/private \
+	-I$(SRCDIR)/src \
+	-I$(SRCDIR)/src/resolver \
+	-I$(SRCDIR)/kern \
+	-I$(SRCDIR) \
+	-I$(SYSROOT)/usr/include \
+	-I$(PANTHERA)/src/xnu-10002.41.9/osfmk \
+	-I$(PANTHERA)/src/xnu-10002.41.9/libkern \
+	-I$(PANTHERA)/src/xnu-10002.41.9/bsd \
+	-I$(PANTHERA)/src/xnu-10002.41.9/libsyscall \
+	-I$(PANTHERA)/src/xnu-10002.41.9/libsyscall/mach \
+	-I$(PANTHERA)/src/xnu-10002.41.9/EXTERNAL_HEADERS \
+	-I$(PANTHERA)/src/libplatform-306.0.1/include \
+	-I$(PANTHERA)/src/libplatform-306.0.1/private \
+	-I$(SDK)/usr/include \
+	-DPRIVATE \
+	-D__LIBC__ \
+	-D__DARWIN_UNIX03=1 \
+	-D__DARWIN_64_BIT_INO_T=1 \
+	-D__DARWIN_NON_CANCELABLE=1 \
+	-D__DARWIN_VERS_1050=1 \
+	-D__PTHREAD_BUILDING_PTHREAD__=1 \
+	-D__PTHREAD_EXPOSE_INTERNALS__=1 \
+	-D__POSIX_LIB__ \
+	-DOS_ATOMIC_CONFIG_MEMORY_ORDER_DEPENDENCY=1 \
+	-Wno-error \
+	-Wno-implicit-function-declaration \
+	-Wno-macro-redefined \
+	-Wno-int-conversion \
+	-Wno-incompatible-pointer-types \
+	-Wno-deprecated-declarations \
+	-Wno-format \
+	-Wno-unused-variable \
+	-Wno-shorten-64-to-32 \
+	-Wno-sign-conversion \
+	-Wno-nullability-completeness \
+	-Wno-expansion-to-defined \
+	-Wno-gnu-conditional-omitted-operand \
+	-Wno-undef \
+	-Wno-missing-field-initializers \
+	-Wno-cast-qual \
+	-Wno-extra-semi \
+	-Wno-unused-parameter \
+	-Wno-typedef-redefinition \
+	-Wno-availability \
+	-Wno-visibility \
+	-Wno-ignored-attributes \
+	-ferror-limit=50 \
+	-fno-stack-protector \
+	-fno-stack-check \
+	-fno-builtin
+
+C_SRCS = \
+	$(SRCDIR)/src/pthread.c \
+	$(SRCDIR)/src/pthread_mutex.c \
+	$(SRCDIR)/src/pthread_cond.c \
+	$(SRCDIR)/src/pthread_rwlock.c \
+	$(SRCDIR)/src/pthread_tsd.c \
+	$(SRCDIR)/src/pthread_atfork.c \
+	$(SRCDIR)/src/pthread_cancelable.c \
+	$(SRCDIR)/src/pthread_cwd.c \
+	$(SRCDIR)/src/pthread_dependency.c \
+	$(SRCDIR)/src/qos.c \
+	$(SRCDIR)/src/resolver/resolver.c \
+	$(SRCDIR)/src/variants/pthread_cancelable_cancel.c
+
+ASM_SRCS = $(SRCDIR)/src/pthread_asm.s $(TRACKED_SHIMDIR)/panthera_pthread_aliases.s
+
+# Object file names (flatten paths)
+OBJS = \
+	$(OBJDIR)/pthread.o \
+	$(OBJDIR)/pthread_mutex.o \
+	$(OBJDIR)/pthread_cond.o \
+	$(OBJDIR)/pthread_rwlock.o \
+	$(OBJDIR)/pthread_tsd.o \
+	$(OBJDIR)/pthread_atfork.o \
+	$(OBJDIR)/pthread_cancelable.o \
+	$(OBJDIR)/pthread_cwd.o \
+	$(OBJDIR)/pthread_dependency.o \
+	$(OBJDIR)/qos.o \
+	$(OBJDIR)/resolver_resolver.o \
+	$(OBJDIR)/variants_pthread_cancelable_cancel.o \
+	$(OBJDIR)/pthread_asm.o \
+	$(OBJDIR)/panthera_pthread_aliases.o
+
+OUTPUT = $(OUTDIR)/libsystem_pthread.dylib
+
+.PHONY: all clean
+
+all: $(OUTPUT)
+	@echo ""
+	@echo "=== Result ==="
+	@file $(OUTPUT)
+	@ls -la $(OUTPUT)
+	@echo ""
+	@echo "Exported symbols:"
+	@nm -gU $(OUTPUT) | wc -l
+	@echo ""
+	@echo "Sample exports:"
+	@nm -gU $(OUTPUT) | head -20
+
+$(OBJDIR) $(OUTDIR):
+	mkdir -p $@
+
+$(OBJDIR)/pthread.o: $(SRCDIR)/src/pthread.c | $(OBJDIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR)/pthread_mutex.o: $(SRCDIR)/src/pthread_mutex.c | $(OBJDIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR)/pthread_cond.o: $(SRCDIR)/src/pthread_cond.c | $(OBJDIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR)/pthread_rwlock.o: $(SRCDIR)/src/pthread_rwlock.c | $(OBJDIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR)/pthread_tsd.o: $(SRCDIR)/src/pthread_tsd.c | $(OBJDIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR)/pthread_atfork.o: $(SRCDIR)/src/pthread_atfork.c | $(OBJDIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR)/pthread_cancelable.o: $(SRCDIR)/src/pthread_cancelable.c | $(OBJDIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR)/pthread_cwd.o: $(SRCDIR)/src/pthread_cwd.c | $(OBJDIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR)/pthread_dependency.o: $(SRCDIR)/src/pthread_dependency.c | $(OBJDIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR)/qos.o: $(SRCDIR)/src/qos.c | $(OBJDIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR)/resolver_resolver.o: $(SRCDIR)/src/resolver/resolver.c | $(OBJDIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR)/variants_pthread_cancelable_cancel.o: $(SRCDIR)/src/variants/pthread_cancelable_cancel.c | $(OBJDIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR)/panthera_pthread_aliases.o: $(TRACKED_SHIMDIR)/panthera_pthread_aliases.s | $(OBJDIR)
+	$(CC) -target $(TARGET) -c $< -o $@
+
+$(OBJDIR)/pthread_asm.o: $(SRCDIR)/src/pthread_asm.s | $(OBJDIR)
+	$(CC) -E -x assembler-with-cpp -target $(TARGET) \
+		-I$(TRACKED_SHIMDIR) \
+		-I$(SRCDIR)/include -I$(SRCDIR)/private -I$(SRCDIR)/src \
+		-I$(SRCDIR)/src/resolver -I$(SRCDIR)/kern \
+		-I$(SYSROOT)/usr/include \
+		-I$(PANTHERA)/src/xnu-10002.41.9/osfmk \
+		-I$(PANTHERA)/src/xnu-10002.41.9/libkern \
+		-I$(PANTHERA)/src/xnu-10002.41.9/bsd \
+		-I$(PANTHERA)/src/xnu-10002.41.9/libsyscall \
+		-I$(PANTHERA)/src/xnu-10002.41.9/libsyscall/mach \
+		-I$(PANTHERA)/src/xnu-10002.41.9/EXTERNAL_HEADERS \
+		-I$(PANTHERA)/src/libplatform-306.0.1/include \
+		-I$(PANTHERA)/src/libplatform-306.0.1/private \
+		-I$(SDK)/usr/include \
+		-DPRIVATE -D__LIBC__ -D__DARWIN_UNIX03=1 -D__DARWIN_64_BIT_INO_T=1 \
+		-D__DARWIN_NON_CANCELABLE=1 -D__DARWIN_VERS_1050=1 -D__PTHREAD_BUILDING_PTHREAD__=1 \
+		-D__PTHREAD_EXPOSE_INTERNALS__=1 -D__POSIX_LIB__ -DOS_ATOMIC_CONFIG_MEMORY_ORDER_DEPENDENCY=1 \
+		$< | sed 's/ ; /\n/g' > $(OBJDIR)/pthread_asm_pp.s
+	$(CC) -target $(TARGET) -c $(OBJDIR)/pthread_asm_pp.s -o $@
+
+$(DYLD_STUB):
+	@if [ -f "$(BUILD_STUB_BINDER)" ]; then \
+		bash "$(BUILD_STUB_BINDER)"; \
+	fi
+
+$(OUTPUT): $(OBJS) $(DYLD_STUB) | $(OUTDIR)
+	$(CC) -target $(TARGET) -dynamiclib \
+		-install_name /usr/lib/system/libsystem_pthread.dylib \
+		-Wl,-compatibility_version,1.0.0 \
+		-Wl,-current_version,519.0.0 \
+		-o $@ \
+		$(OBJS) \
+		$(OUTDIR)/libsystem_kernel.dylib \
+		$(OUTDIR)/libsystem_platform.dylib \
+		$(OUTDIR)/libsystem_malloc.dylib \
+		$(OUTDIR)/libsystem_c.dylib \
+		$(DYLD_STUB) \
+		-undefined dynamic_lookup \
+		-Wl,-not_for_dyld_shared_cache \
+		-nostdlib \
+		-nodefaultlibs
+
+clean:
+	rm -f $(OBJS) $(OBJDIR)/pthread_asm_pp.s $(OUTPUT)

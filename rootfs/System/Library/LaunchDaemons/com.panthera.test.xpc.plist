@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.panthera.test.xpc</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/bin/test_xpc_service</string>
+	</array>
+	<key>MachServices</key>
+	<dict>
+		<key>com.panthera.test.xpc</key>
+		<true/>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/var/log/xpc_service.log</string>
+</dict>
+</plist>

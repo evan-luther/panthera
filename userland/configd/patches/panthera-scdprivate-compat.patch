@@ -1,0 +1,46 @@
+--- SystemConfiguration.fproj/SCDPrivate.c
++++ SystemConfiguration.fproj/SCDPrivate.c
+@@ -963,32 +963,21 @@
+ 	static dispatch_once_t	once;
+ 
+ 	dispatch_once(&once, ^{
+-		CFBundleRef	bundle;
+-
+-		bundle = CFBundleGetMainBundle();
+-		if (bundle != NULL) {
+-			bundleID = CFBundleGetIdentifier(bundle);
+-			if (bundleID != NULL) {
+-				CFRetain(bundleID);
+-			} else {
+-				CFURLRef	url;
++		const char	*prog;
+ 
+-				url = CFBundleCopyExecutableURL(bundle);
+-				if (url != NULL) {
+-					bundleID = CFURLCopyPath(url);
+-					CFRelease(url);
+-				}
+-			}
+-
+-			if (bundleID != NULL) {
+-				if (CFEqual(bundleID, CFSTR("/"))) {
+-					CFRelease(bundleID);
+-					bundleID = NULL;
+-				}
+-			}
++		/*
++		 * Panthera does not yet provide the full CFBundle resource stack
++		 * that newer SystemConfiguration builds expect. A stable process
++		 * identifier is sufficient for session naming here, so prefer the
++		 * executable name and use a static CFSTR fallback.
++		 */
++		prog = getprogname();
++		if ((prog != NULL) && (prog[0] != '\0')) {
++			bundleID = CFStringCreateWithCString(NULL, prog, kCFStringEncodingUTF8);
+ 		}
++
+ 		if (bundleID == NULL) {
+-			bundleID = CFStringCreateWithFormat(NULL, NULL, CFSTR("Unknown(%d)"), getpid());
++			bundleID = CFSTR("panthera");
+ 		}
+ 	});

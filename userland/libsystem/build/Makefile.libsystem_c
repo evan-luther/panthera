@@ -1,0 +1,335 @@
+# Makefile for libsystem_c.dylib - Panthera Darwin
+# Usage: make -f Makefile.libsystem_c -j8
+
+PANTHERA_ROOT ?= $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../../..)
+PANTHERA ?= $(PANTHERA_ROOT)
+BUILDDIR ?= $(PANTHERA)/userland/libsystem/build
+SRCDIR ?= $(PANTHERA)/src/Libc-1583.40.7
+OBJDIR ?= $(BUILDDIR)/obj/libsystem_c
+OUTDIR ?= $(BUILDDIR)/sysroot/usr/lib/system
+SYSROOT ?= $(BUILDDIR)/sysroot
+SHIMSRC ?= $(BUILDDIR)/shims/libsystem_c
+SHIMDIR := $(OBJDIR)/shims
+SDK_PATH := $(shell xcrun -sdk macosx -show-sdk-path)
+BUILD_STUB_BINDER ?= $(BUILDDIR)/build_stub_binder.sh
+DYLD_STUB := $(BUILDDIR)/obj/dyld_stub_binder.o
+
+TARGET := x86_64-apple-darwin23.0
+CC := clang
+
+CFLAGS := -target $(TARGET) -mmacosx-version-min=14.0 -c -fPIC -O2 \
+	-include $(SHIMSRC)/panthera_libc_compat.h \
+	-I$(SHIMSRC) \
+	-I$(SHIMDIR) \
+	-I$(SRCDIR)/include \
+	-I$(SRCDIR)/gen \
+	-I$(SRCDIR)/gen/FreeBSD \
+	-I$(SRCDIR)/stdio \
+	-I$(SRCDIR)/stdio/FreeBSD \
+	-I$(SRCDIR)/stdlib \
+	-I$(SRCDIR)/stdlib/FreeBSD \
+	-I$(SRCDIR)/locale \
+	-I$(SRCDIR)/locale/FreeBSD \
+	-I$(SRCDIR)/fbsdcompat \
+	-I$(SRCDIR)/nls \
+	-I$(SRCDIR)/nls/FreeBSD \
+	-I$(SRCDIR)/darwin \
+	-I$(SRCDIR)/string \
+	-I$(SRCDIR)/string/FreeBSD \
+	-I$(SRCDIR)/stdtime \
+	-I$(SRCDIR)/stdtime/FreeBSD \
+	-I$(SRCDIR)/secure \
+	-I$(SRCDIR)/os \
+	-I$(SRCDIR)/collections \
+	-I$(SRCDIR)/emulated \
+	-I$(SRCDIR)/gdtoa \
+	-I$(SRCDIR)/gdtoa/FreeBSD \
+	-I$(SRCDIR)/sys \
+	-I$(SYSROOT)/usr/include \
+	-I$(PANTHERA)/src/xnu-10002.41.9/osfmk \
+	-I$(PANTHERA)/src/xnu-10002.41.9/EXTERNAL_HEADERS \
+	-I$(PANTHERA)/src/xnu-10002.41.9/bsd \
+	-I$(PANTHERA)/src/xnu-10002.41.9/libkern \
+	-I$(PANTHERA)/src/libplatform-306.0.1/include \
+	-I$(PANTHERA)/src/libplatform-306.0.1/private \
+	-I$(PANTHERA)/src/libpthread-519/include \
+	-I$(PANTHERA)/src/libpthread-519/private \
+	-I$(SDK_PATH)/usr/include \
+	-DPRIVATE \
+	-D__DARWIN_UNIX03=1 \
+	-D__DARWIN_64_BIT_INO_T=1 \
+	-DBUILDING_LIBC=1 \
+	-DPLATFORM_MacOSX=1 \
+	-D_LIBC_NO_FEATURE_VERIFICATION=1 \
+	'-D__SPI_AVAILABLE(...)=' \
+	'-DAPI_AVAILABLE(...)=' \
+	'-DAPI_DEPRECATED(...)=' \
+	'-DAPI_UNAVAILABLE(...)=' \
+	'-DAPI_DEPRECATED_WITH_REPLACEMENT(...)=' \
+	'-D__API_AVAILABLE(...)=' \
+	'-D__API_DEPRECATED(...)=' \
+	'-D__API_UNAVAILABLE(...)=' \
+	'-D__API_DEPRECATED_WITH_REPLACEMENT(...)=' \
+	'-D__OSX_AVAILABLE(...)=' \
+	'-D__OSX_AVAILABLE_STARTING(...)=' \
+	'-D__OSX_AVAILABLE_BUT_DEPRECATED(...)=' \
+	'-D__IOS_AVAILABLE(...)=' \
+	'-D__TVOS_AVAILABLE(...)=' \
+	'-D__WATCHOS_AVAILABLE(...)=' \
+	'-D__swift_unavailable(...)=' \
+	-DOS_UNFAIR_LOCK_AVAILABILITY= \
+	-DOS_LOCK_AVAILABILITY= \
+	-DOS_UNFAIR_LOCK_INLINE= \
+	-Wno-error -w -Wno-implicit-int -Wno-implicit-function-declaration \
+	-Wno-int-conversion -Wno-incompatible-pointer-types \
+	-Wno-incompatible-library-redeclaration
+
+# === Source file lists ===
+# gen/
+GEN_SRCS := $(filter-out %test.c,$(wildcard $(SRCDIR)/gen/*.c)) \
+            $(filter-out %test.c,$(wildcard $(SRCDIR)/gen/FreeBSD/*.c)) \
+            $(filter-out %test.c,$(wildcard $(SRCDIR)/gen/NetBSD/*.c))
+
+# stdio/
+STDIO_SRCS := $(filter-out %test.c,$(wildcard $(SRCDIR)/stdio/*.c)) \
+              $(filter-out %test.c,$(wildcard $(SRCDIR)/stdio/FreeBSD/*.c))
+
+# stdlib/
+STDLIB_SRCS := $(filter-out %test.c,$(wildcard $(SRCDIR)/stdlib/*.c)) \
+               $(filter-out %test.c,$(wildcard $(SRCDIR)/stdlib/FreeBSD/*.c)) \
+               $(filter-out %test.c,$(wildcard $(SRCDIR)/stdlib/NetBSD/*.c)) \
+               $(filter-out %test.c,$(wildcard $(SRCDIR)/stdlib/OpenBSD/*.c))
+
+# string/
+STRING_SRCS := $(filter-out %test.c,$(wildcard $(SRCDIR)/string/*.c)) \
+               $(filter-out %test.c,$(wildcard $(SRCDIR)/string/FreeBSD/*.c)) \
+               $(filter-out %test.c,$(wildcard $(SRCDIR)/string/NetBSD/*.c))
+
+# stdtime/
+STDTIME_SRCS := $(filter-out %test.c,$(wildcard $(SRCDIR)/stdtime/*.c)) \
+                $(filter-out %test.c,$(wildcard $(SRCDIR)/stdtime/FreeBSD/*.c))
+
+# darwin/
+DARWIN_SRCS := $(filter-out %test.c,$(wildcard $(SRCDIR)/darwin/*.c))
+
+# locale/
+LOCALE_SRCS := $(filter-out %test.c,$(wildcard $(SRCDIR)/locale/*.c)) \
+               $(filter-out %test.c,$(wildcard $(SRCDIR)/locale/FreeBSD/*.c))
+
+# secure/
+SECURE_SRCS := $(filter-out %test.c,$(wildcard $(SRCDIR)/secure/*.c))
+
+SLEEP_SRCS := $(SRCDIR)/gen/nanosleep.c $(SRCDIR)/gen/FreeBSD/sleep.c $(SRCDIR)/gen/FreeBSD/usleep.c
+ALL_SRCS := $(filter-out $(SLEEP_SRCS),$(GEN_SRCS) $(STDIO_SRCS) $(STDLIB_SRCS) $(STRING_SRCS) \
+            $(STDTIME_SRCS) $(DARWIN_SRCS) $(LOCALE_SRCS) $(SECURE_SRCS))
+
+# Generate object file names: replace / with _ and change .c to .o
+src_to_obj = $(OBJDIR)/$(subst /,_,$(subst $(SRCDIR)/,,$(1:.c=.o)))
+
+BRIDGE_SRC := $(SHIMSRC)/panthera_libc_bridges.c
+BRIDGE_ASM := $(SHIMSRC)/panthera_libc_aliases.s
+MATH_SRC := $(SHIMSRC)/math
+MATH_OBJS := $(addprefix $(OBJDIR)/aor_,pow.o pow_log_data.o exp_data.o math_err.o)
+SLEEP_OBJS := $(OBJDIR)/gen_nanosleep.o $(OBJDIR)/gen_FreeBSD_sleep.o \
+              $(OBJDIR)/gen_FreeBSD_usleep.o $(OBJDIR)/gen_nanosleep_nocancel.o \
+              $(OBJDIR)/gen_FreeBSD_sleep_nocancel.o
+
+ALL_OBJS := $(foreach src,$(ALL_SRCS),$(call src_to_obj,$(src))) \
+            $(OBJDIR)/panthera_libc_bridges.o \
+            $(OBJDIR)/panthera_libc_aliases.o $(MATH_OBJS) $(SLEEP_OBJS)
+
+# Default target: compile then link
+all: compile link
+	@echo "=== Build complete ==="
+
+$(OBJDIR) $(SHIMDIR) $(OUTDIR):
+	@mkdir -p $@
+
+$(SHIMDIR)/.prepared: | $(SHIMDIR)
+	@mkdir -p $(SHIMDIR)/os $(SHIMDIR)/mach-o $(SHIMDIR)/mach $(SHIMDIR)/libproc $(SHIMDIR)/malloc
+	@echo '#ifndef __TARGETCONDITIONALS_H__' > $(SHIMDIR)/TargetConditionals.h
+	@echo '#define __TARGETCONDITIONALS_H__' >> $(SHIMDIR)/TargetConditionals.h
+	@echo '#define TARGET_OS_MAC 1' >> $(SHIMDIR)/TargetConditionals.h
+	@echo '#define TARGET_OS_OSX 1' >> $(SHIMDIR)/TargetConditionals.h
+	@echo '#define TARGET_OS_IPHONE 0' >> $(SHIMDIR)/TargetConditionals.h
+	@echo '#define TARGET_OS_IOS 0' >> $(SHIMDIR)/TargetConditionals.h
+	@echo '#define TARGET_OS_WATCH 0' >> $(SHIMDIR)/TargetConditionals.h
+	@echo '#define TARGET_OS_TV 0' >> $(SHIMDIR)/TargetConditionals.h
+	@echo '#define TARGET_OS_SIMULATOR 0' >> $(SHIMDIR)/TargetConditionals.h
+	@echo '#define TARGET_OS_EMBEDDED 0' >> $(SHIMDIR)/TargetConditionals.h
+	@echo '#define TARGET_OS_DRIVERKIT 0' >> $(SHIMDIR)/TargetConditionals.h
+	@echo '#define TARGET_OS_BRIDGE 0' >> $(SHIMDIR)/TargetConditionals.h
+	@echo '#define TARGET_CPU_X86_64 1' >> $(SHIMDIR)/TargetConditionals.h
+	@echo '#define TARGET_CPU_ARM 0' >> $(SHIMDIR)/TargetConditionals.h
+	@echo '#define TARGET_CPU_ARM64 0' >> $(SHIMDIR)/TargetConditionals.h
+	@echo '#define TARGET_CPU_X86 0' >> $(SHIMDIR)/TargetConditionals.h
+	@echo '#define TARGET_RT_64_BIT 1' >> $(SHIMDIR)/TargetConditionals.h
+	@echo '#define TARGET_RT_LITTLE_ENDIAN 1' >> $(SHIMDIR)/TargetConditionals.h
+	@echo '#define TARGET_RT_BIG_ENDIAN 0' >> $(SHIMDIR)/TargetConditionals.h
+	@echo '#endif' >> $(SHIMDIR)/TargetConditionals.h
+	@echo '#ifndef _OS_ASSUMES_H_' > $(SHIMDIR)/os/assumes.h
+	@echo '#define _OS_ASSUMES_H_' >> $(SHIMDIR)/os/assumes.h
+	@echo '#include <assert.h>' >> $(SHIMDIR)/os/assumes.h
+	@echo '#include <stdlib.h>' >> $(SHIMDIR)/os/assumes.h
+	@echo '#define os_assumes(_x) ({ __typeof__(_x) _r = (_x); if (!_r) { } _r; })' >> $(SHIMDIR)/os/assumes.h
+	@echo '#define os_assert(_x) assert(_x)' >> $(SHIMDIR)/os/assumes.h
+	@echo '#define os_assumes_zero(_x) ({ __typeof__(_x) _r = (_x); if (_r) { } _r; })' >> $(SHIMDIR)/os/assumes.h
+	@echo '#define os_assert_zero(_x) ({ __typeof__(_x) _r = (_x); assert(_r == 0); _r; })' >> $(SHIMDIR)/os/assumes.h
+	@echo '#define os_crash(msg) abort()' >> $(SHIMDIR)/os/assumes.h
+	@echo '#define os_log_error(log, fmt, ...) ((void)0)' >> $(SHIMDIR)/os/assumes.h
+	@echo '#define OS_CRASH_ENABLE_EXPERIMENTAL_LIBTRACE 0' >> $(SHIMDIR)/os/assumes.h
+	@echo '#endif' >> $(SHIMDIR)/os/assumes.h
+	@echo '#ifndef _MACH_O_DYLD_PRIV_H_' > $(SHIMDIR)/mach-o/dyld_priv.h
+	@echo '#define _MACH_O_DYLD_PRIV_H_' >> $(SHIMDIR)/mach-o/dyld_priv.h
+	@echo '#include <stdint.h>' >> $(SHIMDIR)/mach-o/dyld_priv.h
+	@echo '#include <stdbool.h>' >> $(SHIMDIR)/mach-o/dyld_priv.h
+	@echo 'typedef uint32_t dyld_platform_t;' >> $(SHIMDIR)/mach-o/dyld_priv.h
+	@echo 'static inline bool dyld_program_sdk_at_least(dyld_platform_t __unused p, uint32_t __unused v) { return true; }' >> $(SHIMDIR)/mach-o/dyld_priv.h
+	@echo '#define dyld_fall_2018_os_versions 0x000C0200' >> $(SHIMDIR)/mach-o/dyld_priv.h
+	@echo '#define dyld_fall_2020_os_versions 0x000E0000' >> $(SHIMDIR)/mach-o/dyld_priv.h
+	@echo '#define dyld_platform_version_macOS_10_14 0x000E0000' >> $(SHIMDIR)/mach-o/dyld_priv.h
+	@echo '#define dyld_platform_version_macOS_10_16 0x000E0000' >> $(SHIMDIR)/mach-o/dyld_priv.h
+	@echo '#define dyld_platform_version_macOS_11_0 0x000B0000' >> $(SHIMDIR)/mach-o/dyld_priv.h
+	@echo '#define dyld_platform_version_macOS_12_0 0x000C0000' >> $(SHIMDIR)/mach-o/dyld_priv.h
+	@echo '#define dyld_platform_version_macOS_13_0 0x000D0000' >> $(SHIMDIR)/mach-o/dyld_priv.h
+	@echo '#define PLATFORM_MACOS 1' >> $(SHIMDIR)/mach-o/dyld_priv.h
+	@echo '#endif' >> $(SHIMDIR)/mach-o/dyld_priv.h
+	@echo '#ifndef _CRASHREPORTERCLIENT_H_' > $(SHIMDIR)/CrashReporterClient.h
+	@echo '#define _CRASHREPORTERCLIENT_H_' >> $(SHIMDIR)/CrashReporterClient.h
+	@echo '#define CRSetCrashLogMessage(msg) ((void)0)' >> $(SHIMDIR)/CrashReporterClient.h
+	@echo '#define CRSetCrashLogMessage2(msg) ((void)0)' >> $(SHIMDIR)/CrashReporterClient.h
+	@echo '#define _CRASHREPORTERCLIENT_META_INFO' >> $(SHIMDIR)/CrashReporterClient.h
+	@echo '#define CRASH_REPORTER_CLIENT_HIDDEN' >> $(SHIMDIR)/CrashReporterClient.h
+	@echo '#define CRGetCrashLogMessage() ((const char *)0)' >> $(SHIMDIR)/CrashReporterClient.h
+	@echo 'struct crashreporter_annotations_t {' >> $(SHIMDIR)/CrashReporterClient.h
+	@echo '    unsigned long long version;' >> $(SHIMDIR)/CrashReporterClient.h
+	@echo '    char *message;' >> $(SHIMDIR)/CrashReporterClient.h
+	@echo '    char *message2;' >> $(SHIMDIR)/CrashReporterClient.h
+	@echo '};' >> $(SHIMDIR)/CrashReporterClient.h
+	@echo '#endif' >> $(SHIMDIR)/CrashReporterClient.h
+	@echo '#ifndef _OS_LOG_H_' > $(SHIMDIR)/os/log.h
+	@echo '#define _OS_LOG_H_' >> $(SHIMDIR)/os/log.h
+	@echo '#include <stdint.h>' >> $(SHIMDIR)/os/log.h
+	@echo 'typedef struct os_log_s *os_log_t;' >> $(SHIMDIR)/os/log.h
+	@echo 'typedef uint8_t os_log_type_t;' >> $(SHIMDIR)/os/log.h
+	@echo 'enum {' >> $(SHIMDIR)/os/log.h
+	@echo '    OS_LOG_TYPE_DEFAULT = 0x00,' >> $(SHIMDIR)/os/log.h
+	@echo '    OS_LOG_TYPE_INFO = 0x01,' >> $(SHIMDIR)/os/log.h
+	@echo '    OS_LOG_TYPE_DEBUG = 0x02,' >> $(SHIMDIR)/os/log.h
+	@echo '    OS_LOG_TYPE_ERROR = 0x10,' >> $(SHIMDIR)/os/log.h
+	@echo '    OS_LOG_TYPE_FAULT = 0x11,' >> $(SHIMDIR)/os/log.h
+	@echo '};' >> $(SHIMDIR)/os/log.h
+	@echo '#define OS_LOG_DEFAULT ((os_log_t)0)' >> $(SHIMDIR)/os/log.h
+	@echo '#define os_log(log, fmt, ...) ((void)0)' >> $(SHIMDIR)/os/log.h
+	@echo '#define os_log_debug(log, fmt, ...) ((void)0)' >> $(SHIMDIR)/os/log.h
+	@echo '#define os_log_error(log, fmt, ...) ((void)0)' >> $(SHIMDIR)/os/log.h
+	@echo '#define os_log_info(log, fmt, ...) ((void)0)' >> $(SHIMDIR)/os/log.h
+	@echo '#define os_log_fault(log, fmt, ...) ((void)0)' >> $(SHIMDIR)/os/log.h
+	@echo 'static inline os_log_t os_log_create(const char *s __attribute__((unused)), const char *c __attribute__((unused))) { return (os_log_t)0; }' >> $(SHIMDIR)/os/log.h
+	@echo '#endif' >> $(SHIMDIR)/os/log.h
+	@echo '#ifndef _OS_VARIANT_PRIVATE_H_' > $(SHIMDIR)/os/variant_private.h
+	@echo '#define _OS_VARIANT_PRIVATE_H_' >> $(SHIMDIR)/os/variant_private.h
+	@echo '#include <stdbool.h>' >> $(SHIMDIR)/os/variant_private.h
+	@echo 'static inline bool os_variant_has_internal_content(const char *s __attribute__((unused))) { return false; }' >> $(SHIMDIR)/os/variant_private.h
+	@echo 'static inline bool os_variant_has_internal_diagnostics(const char *s __attribute__((unused))) { return false; }' >> $(SHIMDIR)/os/variant_private.h
+	@echo 'static inline bool os_variant_allows_internal_security_policies(const char *s __attribute__((unused))) { return false; }' >> $(SHIMDIR)/os/variant_private.h
+	@echo '#endif' >> $(SHIMDIR)/os/variant_private.h
+	@echo '#ifndef _OS_LOCK_PRIVATE_H_' > $(SHIMDIR)/os/lock_private.h
+	@echo '#define _OS_LOCK_PRIVATE_H_' >> $(SHIMDIR)/os/lock_private.h
+	@echo '#include <os/lock.h>' >> $(SHIMDIR)/os/lock_private.h
+	@echo 'typedef os_unfair_lock os_unfair_lock_s;' >> $(SHIMDIR)/os/lock_private.h
+	@echo '#endif' >> $(SHIMDIR)/os/lock_private.h
+	@echo '#ifndef _MALLOC_PRIVATE_H_' > $(SHIMDIR)/malloc/malloc_private.h
+	@echo '#define _MALLOC_PRIVATE_H_' >> $(SHIMDIR)/malloc/malloc_private.h
+	@echo '#endif' >> $(SHIMDIR)/malloc/malloc_private.h
+	@echo '#ifndef _LIBPROC_H_' > $(SHIMDIR)/libproc.h
+	@echo '#define _LIBPROC_H_' >> $(SHIMDIR)/libproc.h
+	@echo '#endif' >> $(SHIMDIR)/libproc.h
+	@echo '#ifndef _OS_ONCE_PRIVATE_H_' > $(SHIMDIR)/os/once_private.h
+	@echo '#define _OS_ONCE_PRIVATE_H_' >> $(SHIMDIR)/os/once_private.h
+	@echo 'typedef long os_once_t;' >> $(SHIMDIR)/os/once_private.h
+	@echo 'extern void _os_once(os_once_t *predicate, void *context, void (*function)(void *));' >> $(SHIMDIR)/os/once_private.h
+	@echo 'static inline void os_once(os_once_t *predicate, void *context, void (*function)(void *)) {' >> $(SHIMDIR)/os/once_private.h
+	@echo '    _os_once(predicate, context, function);' >> $(SHIMDIR)/os/once_private.h
+	@echo '}' >> $(SHIMDIR)/os/once_private.h
+	@echo '#define OS_ONCE_INLINE static inline' >> $(SHIMDIR)/os/once_private.h
+	@echo '#endif' >> $(SHIMDIR)/os/once_private.h
+	@touch $@
+
+$(OBJDIR)/panthera_libc_bridges.o: $(BRIDGE_SRC) $(SHIMDIR)/.prepared | $(OBJDIR)
+	@$(CC) $(CFLAGS) $< -o $@ 2>/dev/null && echo "  OK: $(notdir $<)" || echo "  FAIL: $(notdir $<)"
+
+$(OBJDIR)/panthera_libc_aliases.o: $(BRIDGE_ASM) | $(OBJDIR)
+	@$(CC) -target $(TARGET) -c $< -o $@ 2>/dev/null && echo "  OK: $(notdir $<)" || echo "  FAIL: $(notdir $<)"
+
+# Required runtime primitives use fail-fast recipes.
+$(OBJDIR)/aor_%.o: $(MATH_SRC)/%.c $(MATH_SRC)/math_config.h | $(OBJDIR)
+	$(CC) -target $(TARGET) -mmacosx-version-min=14.0 -isysroot $(SDK_PATH) \
+		-c -fPIC -O2 -frounding-math -ffp-contract=off \
+		-DUSE_GLIBC_ABI=0 -DHAVE_FAST_FMA=0 -DHAVE_FAST_ROUND=0 \
+		-DWANT_ROUNDING=1 -DWANT_ERRNO=1 $< -o $@
+
+$(OBJDIR)/gen_nanosleep.o: $(SRCDIR)/gen/nanosleep.c $(SHIMDIR)/.prepared
+	$(CC) $(CFLAGS) -D__DARWIN_NON_CANCELABLE=0 -DVARIANT_CANCELABLE=1 \
+		-DLIBC_ALIAS_NANOSLEEP $< -o $@
+
+$(OBJDIR)/gen_FreeBSD_sleep.o: $(SRCDIR)/gen/FreeBSD/sleep.c $(SHIMDIR)/.prepared
+	$(CC) $(CFLAGS) -D__DARWIN_NON_CANCELABLE=0 -DVARIANT_CANCELABLE=1 \
+		-DLIBC_ALIAS_SLEEP -D__sleep=sleep -D_nanosleep=nanosleep $< -o $@
+
+$(OBJDIR)/gen_FreeBSD_usleep.o: $(SRCDIR)/gen/FreeBSD/usleep.c $(SHIMDIR)/.prepared
+	$(CC) $(CFLAGS) -D__DARWIN_NON_CANCELABLE=0 -DVARIANT_CANCELABLE=1 \
+		-D_nanosleep=nanosleep $< -o $@
+
+$(OBJDIR)/gen_nanosleep_nocancel.o: $(SRCDIR)/gen/nanosleep.c $(SHIMDIR)/.prepared
+	$(CC) $(CFLAGS) -U__DARWIN_NON_CANCELABLE -D__DARWIN_NON_CANCELABLE=1 \
+		-DBUILDING_VARIANT=1 -DLIBC_ALIAS_NANOSLEEP $< -o $@
+
+$(OBJDIR)/gen_FreeBSD_sleep_nocancel.o: $(SRCDIR)/gen/FreeBSD/sleep.c $(SHIMDIR)/.prepared
+	$(CC) $(CFLAGS) -U__DARWIN_NON_CANCELABLE -D__DARWIN_NON_CANCELABLE=1 \
+		-DLIBC_ALIAS_SLEEP -D__sleep=sleep -D_nanosleep=nanosleep $< -o $@
+
+# Phase 1: Compile (ignore failures)
+define COMPILE_RULE
+compile_$(subst /,_,$(subst $(SRCDIR)/,,$(1:.c=))): $(1) $(SHIMDIR)/.prepared
+	@mkdir -p $(OBJDIR)
+	@$(CC) $(CFLAGS) $$< -o $(call src_to_obj,$(1)) 2>/dev/null && echo "  OK: $(subst $(SRCDIR)/,,$(1))" || echo "  FAIL: $(subst $(SRCDIR)/,,$(1))"
+endef
+
+$(foreach src,$(ALL_SRCS),$(eval $(call COMPILE_RULE,$(src))))
+
+COMPILE_TARGETS := $(foreach src,$(ALL_SRCS),compile_$(subst /,_,$(subst $(SRCDIR)/,,$(src:.c=))))
+
+compile: $(SHIMDIR)/.prepared $(COMPILE_TARGETS) $(OBJDIR)/panthera_libc_bridges.o $(OBJDIR)/panthera_libc_aliases.o $(MATH_OBJS) $(SLEEP_OBJS)
+	@echo "=== Compilation phase done ==="
+	@echo "Objects produced: $$(ls $(OBJDIR)/*.o 2>/dev/null | wc -l | tr -d ' ') / $(words $(ALL_OBJS)) sources"
+
+$(DYLD_STUB):
+	@if [ -f "$(BUILD_STUB_BINDER)" ]; then \
+		bash "$(BUILD_STUB_BINDER)"; \
+	fi
+
+# Phase 2: Link whatever compiled
+link: compile $(DYLD_STUB)
+	@mkdir -p $(OUTDIR)
+	@echo "=== Linking libsystem_c.dylib ==="
+	@OBJ_COUNT=$$(ls $(OBJDIR)/*.o 2>/dev/null | wc -l | tr -d ' '); echo "Object files: $$OBJ_COUNT"
+	ld -arch x86_64 -dylib \
+		-install_name /usr/lib/system/libsystem_c.dylib \
+		-o $(OUTDIR)/libsystem_c.dylib \
+		$$(ls $(OBJDIR)/*.o 2>/dev/null) \
+		$(DYLD_STUB) \
+		-undefined dynamic_lookup \
+		-not_for_dyld_shared_cache \
+		-compatibility_version 1.0.0 \
+		-current_version 1583.40.7 \
+		-platform_version macos 14.0.0 14.0.0
+	@echo "=== Result ==="
+	@file $(OUTDIR)/libsystem_c.dylib
+	@ls -lh $(OUTDIR)/libsystem_c.dylib
+	@echo "Exported symbols: $$(nm -gU $(OUTDIR)/libsystem_c.dylib 2>/dev/null | wc -l | tr -d ' ')"
+
+clean:
+	rm -rf $(OBJDIR) $(OUTDIR)/libsystem_c.dylib
+
+.PHONY: all compile link clean $(COMPILE_TARGETS)

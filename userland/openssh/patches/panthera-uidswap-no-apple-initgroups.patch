@@ -1,0 +1,11 @@
+--- uidswap.c.orig
++++ uidswap.c
+@@ -195,7 +195,7 @@
+ 	if (setresgid(pw->pw_gid, pw->pw_gid, pw->pw_gid) == -1)
+ 		fatal("setresgid %u: %.100s", (u_int)pw->pw_gid, strerror(errno));
+ 
+-#ifdef __APPLE__
++#if defined(__APPLE__) && !defined(PANTHERA)
+ 	/*
+ 	 * OS X requires initgroups after setgid to opt back into
+ 	 * memberd support for >16 supplemental groups.

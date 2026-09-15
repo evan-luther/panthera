@@ -1,0 +1,13 @@
+--- printf/printf.c
++++ printf/printf.c
+@@ -194,6 +194,8 @@
+ 		fwrite(start, 1, fmt - start, stdout);
+ 		if (!*gargv) {
+ #ifdef SHELL
+ 			INTON;
+ #endif
++			if (fflush(stdout) == EOF)
++				rval = 1;
+ 			return (rval);
+ 		}
+ 		/* Restart at the beginning of the format string. */

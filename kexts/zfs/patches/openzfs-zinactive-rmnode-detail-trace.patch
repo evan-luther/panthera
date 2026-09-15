@@ -1,0 +1,608 @@
+--- a/module/os/macos/zfs/zfs_znode_os.c
++++ b/module/os/macos/zfs/zfs_znode_os.c
+@@ -80,6 +80,97 @@
+  * freed in order to inspect the unlinked set.
+  */
+ static int zfs_unlink_suspend_progress = 0;
++
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++typedef struct panthera_zfs_zinactive_detail {
++	volatile uint64_t count;
++	volatile uint64_t unlinked_count;
++	volatile uint64_t rmnode_count;
++	volatile uint64_t total_ns;
++	volatile uint64_t hold_enter_ns;
++	volatile uint64_t lock_ns;
++	volatile uint64_t dmu_fini_ns;
++	volatile uint64_t hold_exit_ns;
++	volatile uint64_t rmnode_ns;
++} panthera_zfs_zinactive_detail_t;
++
++static panthera_zfs_zinactive_detail_t panthera_zfs_zinactive_detail;
++
++static uint64_t
++panthera_zfs_zinactive_detail_delta(hrtime_t start, hrtime_t end)
++{
++	return (end > start ? (uint64_t)(end - start) : 0);
++}
++
++static uint64_t
++panthera_zfs_zinactive_detail_inc(volatile uint64_t *counter)
++{
++	return (atomic_add_64_nv(counter, 1));
++}
++
++static void
++panthera_zfs_zinactive_detail_add(volatile uint64_t *counter, uint64_t value)
++{
++	atomic_add_64(counter, value);
++}
++
++static uint64_t
++panthera_zfs_zinactive_detail_ms(uint64_t ns)
++{
++	return (ns / 1000000ULL);
++}
++
++static void
++panthera_zfs_zinactive_detail_record(boolean_t unlinked, boolean_t did_rmnode,
++    uint64_t total_ns, uint64_t hold_enter_ns, uint64_t lock_ns,
++    uint64_t dmu_fini_ns, uint64_t hold_exit_ns, uint64_t rmnode_ns)
++{
++	uint64_t count;
++
++	count = panthera_zfs_zinactive_detail_inc(
++	    &panthera_zfs_zinactive_detail.count);
++	if (unlinked)
++		panthera_zfs_zinactive_detail_inc(
++		    &panthera_zfs_zinactive_detail.unlinked_count);
++	if (did_rmnode)
++		panthera_zfs_zinactive_detail_inc(
++		    &panthera_zfs_zinactive_detail.rmnode_count);
++	panthera_zfs_zinactive_detail_add(
++	    &panthera_zfs_zinactive_detail.total_ns, total_ns);
++	panthera_zfs_zinactive_detail_add(
++	    &panthera_zfs_zinactive_detail.hold_enter_ns, hold_enter_ns);
++	panthera_zfs_zinactive_detail_add(
++	    &panthera_zfs_zinactive_detail.lock_ns, lock_ns);
++	panthera_zfs_zinactive_detail_add(
++	    &panthera_zfs_zinactive_detail.dmu_fini_ns, dmu_fini_ns);
++	panthera_zfs_zinactive_detail_add(
++	    &panthera_zfs_zinactive_detail.hold_exit_ns, hold_exit_ns);
++	panthera_zfs_zinactive_detail_add(
++	    &panthera_zfs_zinactive_detail.rmnode_ns, rmnode_ns);
++
++	if ((count & 0x3ff) == 0) {
++		printf("PANTHERA:ZFS_DETAIL zinactive count=%llu "
++		    "unlinked=%llu rmnode=%llu total_ms=%llu "
++		    "hold_enter_ms=%llu lock_ms=%llu dmu_fini_ms=%llu "
++		    "hold_exit_ms=%llu rmnode_ms=%llu\n",
++		    (u_longlong_t)count,
++		    (u_longlong_t)panthera_zfs_zinactive_detail.unlinked_count,
++		    (u_longlong_t)panthera_zfs_zinactive_detail.rmnode_count,
++		    (u_longlong_t)panthera_zfs_zinactive_detail_ms(
++		    panthera_zfs_zinactive_detail.total_ns),
++		    (u_longlong_t)panthera_zfs_zinactive_detail_ms(
++		    panthera_zfs_zinactive_detail.hold_enter_ns),
++		    (u_longlong_t)panthera_zfs_zinactive_detail_ms(
++		    panthera_zfs_zinactive_detail.lock_ns),
++		    (u_longlong_t)panthera_zfs_zinactive_detail_ms(
++		    panthera_zfs_zinactive_detail.dmu_fini_ns),
++		    (u_longlong_t)panthera_zfs_zinactive_detail_ms(
++		    panthera_zfs_zinactive_detail.hold_exit_ns),
++		    (u_longlong_t)panthera_zfs_zinactive_detail_ms(
++		    panthera_zfs_zinactive_detail.rmnode_ns));
++	}
++}
++#endif
+ 
+ /*
+  * This callback is invoked when acquiring a RL_WRITER or RL_APPEND lock on
+@@ -1413,15 +1504,38 @@
+ 	zfsvfs_t *zfsvfs = zp->z_zfsvfs;
+ 	uint64_t z_id = zp->z_id;
+ 	znode_hold_t *zh;
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	hrtime_t phase_start = gethrtime();
++	hrtime_t phase_op_start;
++	uint64_t phase_hold_enter_ns = 0;
++	uint64_t phase_lock_ns = 0;
++	uint64_t phase_dmu_fini_ns = 0;
++	uint64_t phase_hold_exit_ns = 0;
++	uint64_t phase_rmnode_ns = 0;
++	boolean_t phase_unlinked = B_FALSE;
++	boolean_t phase_did_rmnode = B_FALSE;
++#endif
+ 
+ 	ASSERT(zp->z_sa_hdl);
+ 
+ 	/*
+ 	 * Don't allow a zfs_zget() while were trying to release this znode
+ 	 */
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	phase_op_start = gethrtime();
++#endif
+ 	zh = zfs_znode_hold_enter(zfsvfs, z_id);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	phase_hold_enter_ns += panthera_zfs_zinactive_detail_delta(
++	    phase_op_start, gethrtime());
++	phase_op_start = gethrtime();
++#endif
+ 
+ 	mutex_enter(&zp->z_lock);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	phase_lock_ns += panthera_zfs_zinactive_detail_delta(phase_op_start,
++	    gethrtime());
++#endif
+ 
+ 	/*
+ 	 * If this was the last reference to a file with no links, remove
+@@ -1432,23 +1546,73 @@
+ 	 * closed.  The file will remain in the unlinked set.
+ 	 */
+ 	if (zp->z_unlinked) {
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++		phase_unlinked = B_TRUE;
++#endif
+ 		ASSERT(!zfsvfs->z_issnap);
+ 
+ 		if (!(vfs_isrdonly(zfsvfs->z_vfs)) &&
+ 		    !zfs_unlink_suspend_progress) {
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++			phase_op_start = gethrtime();
++#endif
+ 			mutex_exit(&zp->z_lock);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++			phase_lock_ns += panthera_zfs_zinactive_detail_delta(
++			    phase_op_start, gethrtime());
++			phase_op_start = gethrtime();
++#endif
+ 			zfs_znode_dmu_fini(zp);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++			phase_dmu_fini_ns += panthera_zfs_zinactive_detail_delta(
++			    phase_op_start, gethrtime());
++			phase_op_start = gethrtime();
++#endif
+ 			zfs_znode_hold_exit(zfsvfs, zh);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++			phase_hold_exit_ns += panthera_zfs_zinactive_detail_delta(
++			    phase_op_start, gethrtime());
++			phase_op_start = gethrtime();
++#endif
+			uint64_t ucount = 0;
+			if (!zfsvfs->z_unmounted &&
+			    zfsvfs->z_drain_state == ZFS_DRAIN_SHUTDOWN &&
+			    zap_count(zfsvfs->z_os, zfsvfs->z_unlinkedobj, &ucount) == 0 &&
+			    ucount >= 1024)
+				zfs_unlinked_drain(zfsvfs);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++			panthera_zfs_zinactive_detail_record(phase_unlinked,
++			    phase_did_rmnode,
++			    panthera_zfs_zinactive_detail_delta(phase_start,
++			    gethrtime()), phase_hold_enter_ns, phase_lock_ns,
++			    phase_dmu_fini_ns, phase_hold_exit_ns,
++			    phase_rmnode_ns);
++#endif
+ 			return;
+ 		}
+ 	}
+ 
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	phase_op_start = gethrtime();
++#endif
+ 	mutex_exit(&zp->z_lock);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	phase_lock_ns += panthera_zfs_zinactive_detail_delta(phase_op_start,
++	    gethrtime());
++	phase_op_start = gethrtime();
++#endif
+ 	zfs_znode_dmu_fini(zp);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	phase_dmu_fini_ns += panthera_zfs_zinactive_detail_delta(
++	    phase_op_start, gethrtime());
++	phase_op_start = gethrtime();
++#endif
+ 
+ 	zfs_znode_hold_exit(zfsvfs, zh);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	phase_hold_exit_ns += panthera_zfs_zinactive_detail_delta(
++	    phase_op_start, gethrtime());
++	panthera_zfs_zinactive_detail_record(phase_unlinked, phase_did_rmnode,
++	    panthera_zfs_zinactive_detail_delta(phase_start, gethrtime()),
++	    phase_hold_enter_ns, phase_lock_ns, phase_dmu_fini_ns,
++	    phase_hold_exit_ns, phase_rmnode_ns);
++#endif
+ }
+ 
+ void
+--- a/module/os/macos/zfs/zfs_dir.c
++++ b/module/os/macos/zfs/zfs_dir.c
+@@ -57,6 +57,147 @@
+ #include <sys/dmu_objset.h>
+ #include <sys/dsl_dir.h>
+ 
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++typedef struct panthera_zfs_rmnode_detail {
++	volatile uint64_t count;
++	volatile uint64_t reg_count;
++	volatile uint64_t xattr_dir_count;
++	volatile uint64_t xattr_obj_count;
++	volatile uint64_t errors;
++	volatile uint64_t tx_assign_errors;
++	volatile uint64_t total_ns;
++	volatile uint64_t purge_dir_ns;
++	volatile uint64_t free_long_ns;
++	volatile uint64_t xattr_lookup_ns;
++	volatile uint64_t tx_hold_ns;
++	volatile uint64_t tx_assign_ns;
++	volatile uint64_t xattr_mark_ns;
++	volatile uint64_t unlinked_zap_ns;
++	volatile uint64_t znode_delete_ns;
++	volatile uint64_t tx_commit_ns;
++	volatile uint64_t dmu_fini_ns;
++	volatile uint64_t asyncput_ns;
++} panthera_zfs_rmnode_detail_t;
++
++static panthera_zfs_rmnode_detail_t panthera_zfs_rmnode_detail;
++
++static uint64_t
++panthera_zfs_rmnode_detail_delta(hrtime_t start, hrtime_t end)
++{
++	return (end > start ? (uint64_t)(end - start) : 0);
++}
++
++static uint64_t
++panthera_zfs_rmnode_detail_inc(volatile uint64_t *counter)
++{
++	return (atomic_add_64_nv(counter, 1));
++}
++
++static void
++panthera_zfs_rmnode_detail_add(volatile uint64_t *counter, uint64_t value)
++{
++	atomic_add_64(counter, value);
++}
++
++static uint64_t
++panthera_zfs_rmnode_detail_ms(uint64_t ns)
++{
++	return (ns / 1000000ULL);
++}
++
++static void
++panthera_zfs_rmnode_detail_record(boolean_t is_reg, boolean_t is_xattr_dir,
++    boolean_t has_xattr_obj, int error, boolean_t tx_assign_error,
++    uint64_t total_ns, uint64_t purge_dir_ns, uint64_t free_long_ns,
++    uint64_t xattr_lookup_ns, uint64_t tx_hold_ns, uint64_t tx_assign_ns,
++    uint64_t xattr_mark_ns, uint64_t unlinked_zap_ns,
++    uint64_t znode_delete_ns, uint64_t tx_commit_ns, uint64_t dmu_fini_ns,
++    uint64_t asyncput_ns)
++{
++	uint64_t count;
++
++	count = panthera_zfs_rmnode_detail_inc(&panthera_zfs_rmnode_detail.count);
++	if (is_reg)
++		panthera_zfs_rmnode_detail_inc(
++		    &panthera_zfs_rmnode_detail.reg_count);
++	if (is_xattr_dir)
++		panthera_zfs_rmnode_detail_inc(
++		    &panthera_zfs_rmnode_detail.xattr_dir_count);
++	if (has_xattr_obj)
++		panthera_zfs_rmnode_detail_inc(
++		    &panthera_zfs_rmnode_detail.xattr_obj_count);
++	if (error)
++		panthera_zfs_rmnode_detail_inc(&panthera_zfs_rmnode_detail.errors);
++	if (tx_assign_error)
++		panthera_zfs_rmnode_detail_inc(
++		    &panthera_zfs_rmnode_detail.tx_assign_errors);
++	panthera_zfs_rmnode_detail_add(&panthera_zfs_rmnode_detail.total_ns,
++	    total_ns);
++	panthera_zfs_rmnode_detail_add(&panthera_zfs_rmnode_detail.purge_dir_ns,
++	    purge_dir_ns);
++	panthera_zfs_rmnode_detail_add(&panthera_zfs_rmnode_detail.free_long_ns,
++	    free_long_ns);
++	panthera_zfs_rmnode_detail_add(
++	    &panthera_zfs_rmnode_detail.xattr_lookup_ns, xattr_lookup_ns);
++	panthera_zfs_rmnode_detail_add(&panthera_zfs_rmnode_detail.tx_hold_ns,
++	    tx_hold_ns);
++	panthera_zfs_rmnode_detail_add(&panthera_zfs_rmnode_detail.tx_assign_ns,
++	    tx_assign_ns);
++	panthera_zfs_rmnode_detail_add(&panthera_zfs_rmnode_detail.xattr_mark_ns,
++	    xattr_mark_ns);
++	panthera_zfs_rmnode_detail_add(
++	    &panthera_zfs_rmnode_detail.unlinked_zap_ns, unlinked_zap_ns);
++	panthera_zfs_rmnode_detail_add(
++	    &panthera_zfs_rmnode_detail.znode_delete_ns, znode_delete_ns);
++	panthera_zfs_rmnode_detail_add(&panthera_zfs_rmnode_detail.tx_commit_ns,
++	    tx_commit_ns);
++	panthera_zfs_rmnode_detail_add(&panthera_zfs_rmnode_detail.dmu_fini_ns,
++	    dmu_fini_ns);
++	panthera_zfs_rmnode_detail_add(&panthera_zfs_rmnode_detail.asyncput_ns,
++	    asyncput_ns);
++
++	if ((count & 0x3ff) == 0) {
++		printf("PANTHERA:ZFS_DETAIL rmnode count=%llu reg=%llu "
++		    "xattr_dir=%llu xattr_obj=%llu errors=%llu "
++		    "tx_assign_errors=%llu total_ms=%llu purge_dir_ms=%llu "
++		    "free_long_ms=%llu xattr_lookup_ms=%llu tx_hold_ms=%llu "
++		    "tx_assign_ms=%llu xattr_mark_ms=%llu unlinked_zap_ms=%llu "
++		    "znode_delete_ms=%llu tx_commit_ms=%llu dmu_fini_ms=%llu "
++		    "asyncput_ms=%llu\n",
++		    (u_longlong_t)count,
++		    (u_longlong_t)panthera_zfs_rmnode_detail.reg_count,
++		    (u_longlong_t)panthera_zfs_rmnode_detail.xattr_dir_count,
++		    (u_longlong_t)panthera_zfs_rmnode_detail.xattr_obj_count,
++		    (u_longlong_t)panthera_zfs_rmnode_detail.errors,
++		    (u_longlong_t)panthera_zfs_rmnode_detail.tx_assign_errors,
++		    (u_longlong_t)panthera_zfs_rmnode_detail_ms(
++		    panthera_zfs_rmnode_detail.total_ns),
++		    (u_longlong_t)panthera_zfs_rmnode_detail_ms(
++		    panthera_zfs_rmnode_detail.purge_dir_ns),
++		    (u_longlong_t)panthera_zfs_rmnode_detail_ms(
++		    panthera_zfs_rmnode_detail.free_long_ns),
++		    (u_longlong_t)panthera_zfs_rmnode_detail_ms(
++		    panthera_zfs_rmnode_detail.xattr_lookup_ns),
++		    (u_longlong_t)panthera_zfs_rmnode_detail_ms(
++		    panthera_zfs_rmnode_detail.tx_hold_ns),
++		    (u_longlong_t)panthera_zfs_rmnode_detail_ms(
++		    panthera_zfs_rmnode_detail.tx_assign_ns),
++		    (u_longlong_t)panthera_zfs_rmnode_detail_ms(
++		    panthera_zfs_rmnode_detail.xattr_mark_ns),
++		    (u_longlong_t)panthera_zfs_rmnode_detail_ms(
++		    panthera_zfs_rmnode_detail.unlinked_zap_ns),
++		    (u_longlong_t)panthera_zfs_rmnode_detail_ms(
++		    panthera_zfs_rmnode_detail.znode_delete_ns),
++		    (u_longlong_t)panthera_zfs_rmnode_detail_ms(
++		    panthera_zfs_rmnode_detail.tx_commit_ns),
++		    (u_longlong_t)panthera_zfs_rmnode_detail_ms(
++		    panthera_zfs_rmnode_detail.dmu_fini_ns),
++		    (u_longlong_t)panthera_zfs_rmnode_detail_ms(
++		    panthera_zfs_rmnode_detail.asyncput_ns));
++	}
++}
++#endif
++
+ /*
+  * zfs_match_find() is used by zfs_dirent_lock() to perform zap lookups
+  * of names after deciding which is the appropriate lookup interface.
+@@ -660,20 +801,68 @@
+ 	uint64_t	acl_obj;
+ 	uint64_t	xattr_obj;
+ 	int		error;
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	hrtime_t	phase_start = gethrtime();
++	hrtime_t	phase_op_start;
++	uint64_t	phase_purge_dir_ns = 0;
++	uint64_t	phase_free_long_ns = 0;
++	uint64_t	phase_xattr_lookup_ns = 0;
++	uint64_t	phase_tx_hold_ns = 0;
++	uint64_t	phase_tx_assign_ns = 0;
++	uint64_t	phase_xattr_mark_ns = 0;
++	uint64_t	phase_unlinked_zap_ns = 0;
++	uint64_t	phase_znode_delete_ns = 0;
++	uint64_t	phase_tx_commit_ns = 0;
++	uint64_t	phase_dmu_fini_ns = 0;
++	uint64_t	phase_asyncput_ns = 0;
++	boolean_t	phase_is_reg = S_ISREG(zp->z_mode);
++	boolean_t	phase_is_xattr_dir =
++	    (S_ISDIR(zp->z_mode) && (zp->z_pflags & ZFS_XATTR));
++	boolean_t	phase_has_xattr_obj = B_FALSE;
++	boolean_t	phase_tx_assign_error = B_FALSE;
++	int		phase_error = 0;
++#endif
+ 
+ 	/*
+ 	 * If this is an attribute directory, purge its contents.
+ 	 */
+ 	if (S_ISDIR(zp->z_mode) && (zp->z_pflags & ZFS_XATTR)) {
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++		phase_op_start = gethrtime();
++#endif
+ 		if (zfs_purgedir(zp) != 0) {
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++			phase_purge_dir_ns += panthera_zfs_rmnode_detail_delta(
++			    phase_op_start, gethrtime());
++			phase_op_start = gethrtime();
++#endif
+ 			/*
+ 			 * Not enough space to delete some xattrs.
+ 			 * Leave it in the unlinked set.
+ 			 */
+ 			zfs_znode_dmu_fini(zp);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++			phase_dmu_fini_ns += panthera_zfs_rmnode_detail_delta(
++			    phase_op_start, gethrtime());
++			phase_error = EIO;
++			panthera_zfs_rmnode_detail_record(phase_is_reg,
++			    phase_is_xattr_dir, phase_has_xattr_obj, phase_error,
++			    phase_tx_assign_error,
++			    panthera_zfs_rmnode_detail_delta(phase_start,
++			    gethrtime()), phase_purge_dir_ns, phase_free_long_ns,
++			    phase_xattr_lookup_ns, phase_tx_hold_ns,
++			    phase_tx_assign_ns, phase_xattr_mark_ns,
++			    phase_unlinked_zap_ns, phase_znode_delete_ns,
++			    phase_tx_commit_ns, phase_dmu_fini_ns,
++			    phase_asyncput_ns);
++#endif
+ 
+ 			return;
+ 		}
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++		phase_purge_dir_ns += panthera_zfs_rmnode_detail_delta(
++		    phase_op_start, gethrtime());
++#endif
+ 	}
+ 
+ 	/*
+@@ -684,13 +873,38 @@
+ 	 * truncated file is harmless since it only contains user data.
+ 	 */
+ 	if (S_ISREG(zp->z_mode)) {
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++		phase_op_start = gethrtime();
++#endif
+ 		error = dmu_free_long_range(os, zp->z_id, 0, DMU_OBJECT_END);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++		phase_free_long_ns += panthera_zfs_rmnode_detail_delta(
++		    phase_op_start, gethrtime());
++#endif
+ 		if (error) {
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++			phase_error = error;
++			phase_op_start = gethrtime();
++#endif
+ 			/*
+ 			 * Not enough space or we were interrupted by unmount.
+ 			 * Leave the file in the unlinked set.
+ 			 */
+ 			zfs_znode_dmu_fini(zp);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++			phase_dmu_fini_ns += panthera_zfs_rmnode_detail_delta(
++			    phase_op_start, gethrtime());
++			panthera_zfs_rmnode_detail_record(phase_is_reg,
++			    phase_is_xattr_dir, phase_has_xattr_obj, phase_error,
++			    phase_tx_assign_error,
++			    panthera_zfs_rmnode_detail_delta(phase_start,
++			    gethrtime()), phase_purge_dir_ns, phase_free_long_ns,
++			    phase_xattr_lookup_ns, phase_tx_hold_ns,
++			    phase_tx_assign_ns, phase_xattr_mark_ns,
++			    phase_unlinked_zap_ns, phase_znode_delete_ns,
++			    phase_tx_commit_ns, phase_dmu_fini_ns,
++			    phase_asyncput_ns);
++#endif
+ 			return;
+ 		}
+ 	}
+@@ -699,19 +913,32 @@
+ 	 * If the file has extended attributes, we're going to unlink
+ 	 * the xattr dir.
+ 	 */
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	phase_op_start = gethrtime();
++#endif
+ 	error = sa_lookup(zp->z_sa_hdl, SA_ZPL_XATTR(zfsvfs),
+ 	    &xattr_obj, sizeof (xattr_obj));
+ 	if (error == 0 && xattr_obj) {
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++		phase_has_xattr_obj = B_TRUE;
++#endif
+ 		error = zfs_zget_ext(zfsvfs, xattr_obj, &xzp,
+ 		    ZGET_FLAG_ASYNC);
+ 		ASSERT(error == 0);
+ 	}
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	phase_xattr_lookup_ns += panthera_zfs_rmnode_detail_delta(
++	    phase_op_start, gethrtime());
++#endif
+ 
+ 	acl_obj = zfs_external_acl(zp);
+ 
+ 	/*
+ 	 * Set up the final transaction.
+ 	 */
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	phase_op_start = gethrtime();
++#endif
+ 	tx = dmu_tx_create(os);
+ 	dmu_tx_hold_free(tx, zp->z_id, 0, DMU_OBJECT_END);
+ 	dmu_tx_hold_zap(tx, zfsvfs->z_unlinkedobj, FALSE, NULL);
+@@ -723,8 +950,21 @@
+ 		dmu_tx_hold_free(tx, acl_obj, 0, DMU_OBJECT_END);
+ 
+ 	zfs_sa_upgrade_txholds(tx, zp);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	phase_tx_hold_ns += panthera_zfs_rmnode_detail_delta(phase_op_start,
++	    gethrtime());
++	phase_op_start = gethrtime();
++#endif
+ 	error = dmu_tx_assign(tx, TXG_WAIT);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	phase_tx_assign_ns += panthera_zfs_rmnode_detail_delta(phase_op_start,
++	    gethrtime());
++#endif
+ 	if (error) {
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++		phase_error = error;
++		phase_tx_assign_error = B_TRUE;
++#endif
+ 		/*
+ 		 * Not enough space to delete the file.  Leave it in the
+ 		 * unlinked set, leaking it until the fs is remounted (at
+@@ -737,6 +977,9 @@
+ 
+ 	if (xzp) {
+ 		ASSERT(error == 0);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++		phase_op_start = gethrtime();
++#endif
+ 		mutex_enter(&xzp->z_lock);
+ 		xzp->z_unlinked = B_TRUE;	/* mark xzp for deletion */
+ 		xzp->z_links = 0;	/* no more links to it */
+@@ -744,8 +987,15 @@
+ 		    &xzp->z_links, sizeof (xzp->z_links), tx));
+ 		mutex_exit(&xzp->z_lock);
+ 		zfs_unlinked_add(xzp, tx);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++		phase_xattr_mark_ns += panthera_zfs_rmnode_detail_delta(
++		    phase_op_start, gethrtime());
++#endif
+ 	}
+ 
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	phase_op_start = gethrtime();
++#endif
+ 	mutex_enter(&os->os_dsl_dataset->ds_dir->dd_activity_lock);
+ 
+ 	/*
+@@ -764,17 +1014,50 @@
+ 	}
+ 
+ 	mutex_exit(&os->os_dsl_dataset->ds_dir->dd_activity_lock);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	phase_unlinked_zap_ns += panthera_zfs_rmnode_detail_delta(
++	    phase_op_start, gethrtime());
++#endif
+ 
+ 	dataset_kstats_update_nunlinked_kstat(&zfsvfs->z_kstat, 1);
+ 
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	phase_op_start = gethrtime();
++#endif
+ 	zfs_znode_delete(zp, tx);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	phase_znode_delete_ns += panthera_zfs_rmnode_detail_delta(
++	    phase_op_start, gethrtime());
++	phase_op_start = gethrtime();
++#endif
+ 
+ 	dmu_tx_commit(tx);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	phase_tx_commit_ns += panthera_zfs_rmnode_detail_delta(phase_op_start,
++	    gethrtime());
++#endif
+ out:
+ 
+ 	/* Be aware this is not the "normal" zfs_zrele_async() */
+-	if (xzp)
++	if (xzp) {
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++		phase_op_start = gethrtime();
++#endif
+ 		zfs_znode_asyncput(xzp);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++		phase_asyncput_ns += panthera_zfs_rmnode_detail_delta(
++		    phase_op_start, gethrtime());
++#endif
++	}
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	panthera_zfs_rmnode_detail_record(phase_is_reg, phase_is_xattr_dir,
++	    phase_has_xattr_obj, phase_error, phase_tx_assign_error,
++	    panthera_zfs_rmnode_detail_delta(phase_start, gethrtime()),
++	    phase_purge_dir_ns, phase_free_long_ns, phase_xattr_lookup_ns,
++	    phase_tx_hold_ns, phase_tx_assign_ns, phase_xattr_mark_ns,
++	    phase_unlinked_zap_ns, phase_znode_delete_ns, phase_tx_commit_ns,
++	    phase_dmu_fini_ns, phase_asyncput_ns);
++#endif
+ }
+ 
+ static uint64_t

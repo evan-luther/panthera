@@ -1,0 +1,16 @@
+#ifndef _PANTHERA_LIBDISPATCH_SYS_ULOCK_H
+#define _PANTHERA_LIBDISPATCH_SYS_ULOCK_H
+
+#ifndef PRIVATE
+#define PANTHERA_ULOCK_PRIVATE_WAS_UNSET 1
+#define PRIVATE 1
+#endif
+
+#include <bsd/sys/ulock.h>
+
+#ifdef PANTHERA_ULOCK_PRIVATE_WAS_UNSET
+#undef PANTHERA_ULOCK_PRIVATE_WAS_UNSET
+#undef PRIVATE
+#endif
+
+#endif

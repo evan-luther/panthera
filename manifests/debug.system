@@ -1,0 +1,45 @@
+# Panthera debug/test rootfs manifest
+# Format: kind|required|source|destination|producer|verification|condition|note
+
+file|optional|tools/chown_cache_owner_guest|/bin/chown_cache_owner_guest|tools/build_guest_helpers.sh|manual cache ownership smoke|always|guest-side cache ownership helper
+file|optional|tools/boot_verify_guest|/usr/bin/boot_verify_guest,/usr/bin/boot_verify_daemon_network,/usr/bin/boot_verify_ipconfig_control|tools/build_boot_verify_guest.sh|phase 5 boot verification|always|deterministic launchd-driven guest boot probes
+file|optional|rootfs/System/Library/LaunchDaemons/com.panthera.bootverify.plist|/System/Library/LaunchDaemons/com.panthera.bootverify.plist|source tree|phase 5 boot verification|always|launchd job for boot verification probes
+file|optional|tools/ncurses_probe|/bin/ncurses_probe|tools/build_guest_helpers.sh|ncurses smoke|always|terminal capability diagnostic
+file|optional|tools/setupterm_probe|/bin/setupterm_probe|tools/build_guest_helpers.sh|ncurses smoke|always|setupterm diagnostic
+file|optional|tools/ncurses_diag.sh|/usr/libexec/ncurses_diag.sh|source tree|manual diagnostic|always|ncurses diagnostic script
+file|optional|tools/test_curl.sh|/usr/libexec/test_curl.sh|source tree|manual network diagnostic|always|curl diagnostic script
+file|optional|tools/test_tcp_io.sh|/usr/libexec/test_tcp_io.sh|source tree|manual network diagnostic|always|TCP diagnostic script
+file|optional|tests/test_mach_ipc|/usr/bin/test_mach_ipc|tests build flow|guest test|always|Mach IPC smoke
+file|optional|tests/test_bootstrap|/usr/bin/test_bootstrap|tests build flow|guest test|always|bootstrap smoke
+file|optional|tests/test_bootstrap_simple|/usr/bin/test_bootstrap_simple|tests build flow|guest test|always|simple bootstrap smoke
+file|optional|tests/test_pthread|/usr/bin/test_pthread|tests build flow|guest test|always|pthread smoke
+file|optional|tests/test_cf|/usr/bin/test_cf|tests build flow|guest test|always|CoreFoundation smoke
+file|optional|userland/notifyd/bin/test_notify|/usr/bin/test_notify|userland/notifyd/build_notifyd.sh|notify smoke|always|notify client test
+file|optional|tests/test_tcp_recv|/usr/bin/test_tcp_recv|tests build flow|guest test|always|TCP receive smoke
+file|optional|tests/test_poll443|/usr/bin/test_poll443|tests build flow|guest test|always|poll 443 smoke
+file|optional|tools/test_poll_tcp|/usr/bin/test_poll_tcp|tools build flow|guest test|always|TCP poll smoke
+file|optional|tools/test_nbio_select|/usr/bin/test_nbio_select|tools build flow|guest test|always|nonblocking select smoke
+file|optional|tools/test_tls_basic|/usr/bin/test_tls_basic|tools build flow|guest test|always|TLS load smoke
+file|optional|tools/test_dispatch_timer|/usr/bin/test_dispatch_timer|tools/build_dispatch_timer_probe.sh|guest dispatch timer smoke|always|dispatch timer source callback smoke
+file|optional|tools/mdns_dns_sd_probe|/usr/bin/mdns_dns_sd_probe|tools/build_mdns_dns_sd_probe.sh|Bonjour smoke|always|DNS-SD IPC TCP listener probe
+file|optional|tools/ssh_raw_exit_probe|/usr/bin/ssh_raw_exit_probe|tools/build_ssh_exit_probes.sh|OpenSSH exec smoke|always|raw _exit SSH command probe
+file|optional|tools/ssh_return_exit_probe|/usr/bin/ssh_return_exit_probe|tools/build_ssh_exit_probes.sh|OpenSSH exec smoke|always|libc return/exit SSH command probe
+file|optional|tools/pselect_pipe_eof_probe|/usr/bin/pselect_pipe_eof_probe|tools/build_ssh_exit_probes.sh|OpenSSH exec smoke|always|pselect pipe EOF readiness probe
+file|optional|tools/signal_unblock_probe|/usr/bin/signal_unblock_probe|tools/build_ssh_exit_probes.sh|OpenSSH exec smoke|always|pending signal unblock and sigreturn probe
+file|optional|tools/libsystem_primitives_probe|/usr/bin/libsystem_primitives_probe|tools/build_ssh_exit_probes.sh|libSystem regression smoke|always|pow, sleep, interruption and cancellation behavior
+file|optional|tools/zfs_root_statfs_probe|/usr/bin/zfs_root_statfs_probe|userland/panthera_sdk/bin/panthera-cc tools/zfs_root_statfs_probe.c|ZFS root smoke|always|statfs and write probe for ZFS root verification
+file|optional|tools/poll_listen_probe|/usr/bin/poll_listen_probe|tools/build_poll_listen_probe.sh|kernel poll listener smoke|PANTHERA_STAGE_POLL_LISTEN_PROBE=1|loopback listener poll readiness probe
+file|optional|rootfs/System/Library/LaunchDaemons/com.panthera.poll-listen-probe.plist|/System/Library/LaunchDaemons/com.panthera.poll-listen-probe.plist|source tree|kernel poll listener smoke|PANTHERA_STAGE_POLL_LISTEN_PROBE=1|launchd job for loopback listener poll probe
+file|optional|tools/poll_listen_probe|/usr/bin/poll_listen_probe|tools/build_poll_listen_probe.sh|host-forward poll listener smoke|PANTHERA_STAGE_POLL_HOSTFWD_PROBE=1|host-forward listener poll readiness probe
+file|optional|rootfs/System/Library/LaunchDaemons/com.panthera.poll-hostfwd-probe.plist|/System/Library/LaunchDaemons/com.panthera.poll-hostfwd-probe.plist|source tree|host-forward poll listener smoke|PANTHERA_STAGE_POLL_HOSTFWD_PROBE=1|launchd job for host-forward listener poll probe
+file|optional|tools/poll_listen_probe|/usr/bin/poll_listen_probe|tools/build_poll_listen_probe.sh|host-forward compat ppoll listener smoke|PANTHERA_STAGE_PPOLL_HOSTFWD_PROBE=1|host-forward listener compat ppoll readiness probe
+file|optional|rootfs/System/Library/LaunchDaemons/com.panthera.ppoll-hostfwd-probe.plist|/System/Library/LaunchDaemons/com.panthera.ppoll-hostfwd-probe.plist|source tree|host-forward compat ppoll listener smoke|PANTHERA_STAGE_PPOLL_HOSTFWD_PROBE=1|launchd job for host-forward listener compat ppoll probe
+file|optional|tools/poll_listen_probe|/usr/bin/poll_listen_probe|tools/build_poll_listen_probe.sh|host-forward empty-mask compat ppoll listener smoke|PANTHERA_STAGE_PPOLL_EMPTY_HOSTFWD_PROBE=1|host-forward listener compat ppoll empty-mask readiness probe
+file|optional|rootfs/System/Library/LaunchDaemons/com.panthera.ppoll-empty-hostfwd-probe.plist|/System/Library/LaunchDaemons/com.panthera.ppoll-empty-hostfwd-probe.plist|source tree|host-forward empty-mask compat ppoll listener smoke|PANTHERA_STAGE_PPOLL_EMPTY_HOSTFWD_PROBE=1|launchd job for host-forward listener compat ppoll empty-mask probe
+file|optional|tools/test_openssl_connect|/usr/bin/test_openssl_connect|tools build flow|guest test|always|OpenSSL connect smoke
+file|optional|tools/test_recv_len|/usr/bin/test_recv_len|tools build flow|guest test|always|recv length smoke
+file|optional|tools/test_recv_eagain|/usr/bin/test_recv_eagain|tools build flow|guest test|always|recv EAGAIN smoke
+file|optional|tests/test_xpc_service|/usr/bin/test_xpc_service|tests build flow|guest test|PANTHERA_STAGE_TEST_XPC!=0|XPC service smoke daemon
+file|optional|rootfs/System/Library/LaunchDaemons/com.panthera.test.xpc.plist|/System/Library/LaunchDaemons/com.panthera.test.xpc.plist|source tree|XPC smoke|PANTHERA_STAGE_TEST_XPC!=0|XPC test launch daemon
+file|optional|userland/iokituser/bin/iokit_fb_probe|/usr/bin/iokit_fb_probe|userland/iokituser/build_iokituser.sh|IOKit framebuffer smoke|always|IOKit framebuffer diagnostic
+file|optional|userland/configd/bin/sc_dynamic_store_probe|/usr/bin/sc_dynamic_store_probe|userland/configd/build_configd.sh|dynamic store smoke|always|manual SystemConfiguration diagnostic

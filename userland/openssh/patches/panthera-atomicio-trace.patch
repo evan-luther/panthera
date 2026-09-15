@@ -1,0 +1,65 @@
+--- atomicio.c.orig
++++ atomicio.c
+@@ -31,6 +31,8 @@
+ #include <sys/uio.h>
+ 
+ #include <errno.h>
++#include <fcntl.h>
++#include <stdarg.h>
+ #ifdef HAVE_POLL_H
+ #include <poll.h>
+ #else
+@@ -46,6 +48,31 @@
+ /*
+  * ensure all of data on socket comes through. f==read || f==vwrite
+  */
++#ifdef PANTHERA
++static void
++panthera_atomicio_tracef(const char *fmt, ...)
++{
++	char buf[256];
++	va_list ap;
++	int fd;
++
++	va_start(ap, fmt);
++	(void)vsnprintf(buf, sizeof(buf), fmt, ap);
++	va_end(ap);
++	buf[sizeof(buf) - 1] = '\0';
++	(void)write(STDERR_FILENO, buf, strlen(buf));
++	(void)write(STDERR_FILENO, "\n", 1);
++	fd = open("/dev/console", O_WRONLY);
++	if (fd >= 0) {
++		(void)write(fd, buf, strlen(buf));
++		(void)write(fd, "\n", 1);
++		(void)close(fd);
++	}
++}
++#else
++#define panthera_atomicio_tracef(...) do { } while (0)
++#endif
++
+ size_t
+ atomicio6(ssize_t (*f) (int, void *, size_t), int fd, void *_s, size_t n,
+     int (*cb)(void *, size_t), void *cb_arg)
+@@ -64,6 +89,8 @@
+ #endif
+ 	while (n > pos) {
+ 		res = (f) (fd, s + pos, n - pos);
++		panthera_atomicio_tracef("PANTHERA:atomicio fd=%d want=%zu pos=%zu res=%zd errno=%d events=0x%x",
++		    fd, n, pos, res, errno, pfd.events);
+ 		switch (res) {
+ 		case -1:
+ 			if (errno == EINTR) {
+@@ -73,7 +100,11 @@
+ 				}
+ 				continue;
+ 			} else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+-				(void)poll(&pfd, 1, -1);
++				panthera_atomicio_tracef("PANTHERA:atomicio poll enter fd=%d events=0x%x",
++				    fd, pfd.events);
++				res = poll(&pfd, 1, -1);
++				panthera_atomicio_tracef("PANTHERA:atomicio poll ret=%zd errno=%d fd=%d revents=0x%x",
++				    res, errno, fd, pfd.revents);
+ 				continue;
+ 			}
+ 			return 0;

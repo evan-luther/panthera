@@ -1,0 +1,84 @@
+Panthera — source publication notices
+====================================
+
+This repository combines Panthera integration work and modified third-party
+source. There is no repository-wide license grant for all of these materials.
+Individual source notices control. No blanket license for Panthera-authored
+code should be inferred from the third-party license copies below.
+
+This product includes software developed by the University of California,
+Berkeley and its contributors.
+
+Included license material
+-------------------------
+
+* Apple Public Source License 2.0: LICENSES/APSL-2.0.txt.
+  Applies to files identifying that license, including modified XNU and
+  Apple-derived source. Other Apple components use different licenses.
+  Source: apple-oss-distributions/xnu, tag xnu-10002.41.9, APPLE_LICENSE.
+
+* BSD-licensed source: retain the copyright holders, conditions, and disclaimers
+  in each source file. Different files carry different BSD variants. The
+  FreeBSD notice and Dave Borman contributor acknowledgment have been restored
+  in userland/file_cmds/panthera_setmode.c.
+
+* GNU GPL version 2: LICENSES/GPL-2.0.txt.
+  userland/libcxxabi/shims/unwind-cxx.h derives from Apple's libcppabi-26
+  include/unwind-cxx.h (Free Software Foundation copyright 2001). Its GPL-2.0-
+  or-later notice and special linking exception are preserved in that header.
+  The exception is not a blanket exemption for other GPL-covered material.
+  License text source: apple-oss-distributions/libcppabi, tag libcppabi-26,
+  libcppabi.txt.
+
+* Apache License 2.0: LICENSES/Apache-2.0.txt.
+  Applies where identified by a source file, including Apache-licensed Apple
+  launchd code. Source: https://www.apache.org/licenses/LICENSE-2.0.txt
+  Vendored LLVM scalar math retains its complete Apache/LLVM-exception text
+  at userland/libsystem/build/shims/libsystem_c/math/LICENSE.TXT.
+
+* ICU and Unicode data: LICENSES/ICU-76142.3.1.1.txt.
+  This is the complete icu/LICENSE from apple-oss-distributions/ICU, tag
+  ICU-76142.3.1.1, including its third-party data notices. It accompanies
+  userland/icu/data/icudt76l.dat, produced from that source family by
+  userland/icu/build_icu.sh. Do not replace it with a generic ICU license.
+
+* Tamzen/Tamsyn console font: LICENSES/Tamzen.txt.
+  Tamsyn copyright 2010 Scott Fial; Tamzen copyright 2011 Suraj N. Kurapati.
+  These are custom permissive terms, not the MIT license. The attribution in
+  src/xnu-10002.41.9/osfmk/console/tamzen_font.c has been corrected.
+  Source: https://github.com/sunaku/tamzen-font/blob/master/LICENSE
+
+External dependencies retain their own upstream licenses and notices. The
+fetch/build scripts do not grant additional redistribution rights. A build
+host's Xcode or macOS SDK license is not a license to redistribute proprietary
+Apple binaries, frameworks, or SDK contents.
+
+Initial public snapshot
+-----------------------
+
+The initial public source snapshot is based on the locally verified Panthera
+checkpoint 265de5cfddcbd63ac7505e7cdb5594460321ed08, with this notice bundle,
+restored/corrected source notices, and the project README. That identifier is
+an internal provenance reference, not an ancestor of the public repository.
+
+The public snapshot intentionally has no inherited development history:
+older local ancestry contains unrelated project data and generated binaries.
+Local history remains intact. No claim is made that those historical binaries
+have completed a redistribution audit.
+
+The optional vendor/usertemplate-109 payload and unused montecarlo_font.c
+are excluded from the public snapshot because an authoritative redistribution
+grant was not established during publication review. Their omission is not a
+claim that they are proprietary. The active console font is Tamzen. The
+uncommitted R3.2 pkgsrc experiments, downloaded source caches, VM images,
+private development artifacts, and generated executables are not published.
+
+The source and history checks found no confirmed live provider credentials or
+actual private-key payloads in the approved source snapshot. This is not a
+security certification: development guest account defaults and network
+exposure remain unsafe for untrusted environments; see README.md.
+
+See docs/provenance/PROVENANCE.md, docs/provenance/THIRD_PARTY.md, and
+docs/provenance/APPLE_PATCHES.md for component intake and modification records.
+The inventory is not a blanket
+legal opinion or a claim that arbitrary built images are redistribution-ready.

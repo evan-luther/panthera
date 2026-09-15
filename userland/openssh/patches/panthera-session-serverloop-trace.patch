@@ -1,0 +1,335 @@
+--- serverloop.c.orig
++++ serverloop.c
+@@ -101,6 +101,31 @@
+ /* requested tunnel forwarding interface(s), shared with session.c */
+ char *tun_fwd_ifnames = NULL;
+ 
++#ifdef PANTHERA
++static void
++panthera_serverloop_tracef(const char *fmt, ...)
++{
++	char buf[256];
++	va_list ap;
++	int fd;
++
++	va_start(ap, fmt);
++	(void)vsnprintf(buf, sizeof(buf), fmt, ap);
++	va_end(ap);
++	buf[sizeof(buf) - 1] = '\0';
++	(void)write(STDERR_FILENO, buf, strlen(buf));
++	(void)write(STDERR_FILENO, "\n", 1);
++	fd = open("/dev/console", O_WRONLY);
++	if (fd >= 0) {
++		(void)write(fd, buf, strlen(buf));
++		(void)write(fd, "\n", 1);
++		(void)close(fd);
++	}
++}
++#else
++#define panthera_serverloop_tracef(...) do { } while (0)
++#endif
++
+ /* returns 1 if bind to specified port by specified user is permitted */
+ static int
+ bind_permitted(int port, uid_t uid)
+@@ -116,6 +141,8 @@
+ sigchld_handler(int sig)
+ {
+ 	child_terminated = 1;
++	panthera_serverloop_tracef("PANTHERA:sshd serverloop sigchld sig=%d self=%ld",
++	    sig, (long)getpid());
+ }
+ 
+ static void
+@@ -236,7 +263,13 @@
+ 		ptimeout_deadline_ms(&timeout, 100);
+ 
+ 	/* Wait for something to happen, or the timeout to expire. */
++	panthera_serverloop_tracef("PANTHERA:sshd serverloop ppoll enter active=%u child_term=%d conn_in=%d conn_out=%d ch_open=%d",
++	    *npfd_activep, child_terminated, connection_in, connection_out,
++	    channel_still_open(ssh));
+ 	ret = ppoll(*pfdp, *npfd_activep, ptimeout_get_tsp(&timeout), sigsetp);
++	panthera_serverloop_tracef("PANTHERA:sshd serverloop ppoll ret=%d errno=%d child_term=%d rev0=0x%x rev1=0x%x",
++	    ret, errno, child_terminated, (*pfdp)[0].revents,
++	    (*pfdp)[1].revents);
+ 
+ 	if (ret == -1) {
+ 		for (p = 0; p < *npfd_activep; p++)
+@@ -324,15 +357,29 @@
+ collect_children(struct ssh *ssh)
+ {
+ 	pid_t pid;
+-	int status;
++	int status, wait_errno;
+ 
+ 	if (child_terminated) {
+ 		debug("Received SIGCHLD.");
+-		while ((pid = waitpid(-1, &status, WNOHANG)) > 0 ||
+-		    (pid == -1 && errno == EINTR))
+-			if (pid > 0)
++		panthera_serverloop_tracef("PANTHERA:sshd serverloop collect enter self=%ld",
++		    (long)getpid());
++		for (;;) {
++			errno = 0;
++			pid = waitpid(-1, &status, WNOHANG);
++			wait_errno = errno;
++			panthera_serverloop_tracef("PANTHERA:sshd serverloop waitpid pid=%ld status=0x%x errno=%d",
++			    (long)pid, status, wait_errno);
++			if (pid > 0) {
+ 				session_close_by_pid(ssh, pid, status);
++				continue;
++			}
++			if (pid == -1 && wait_errno == EINTR)
++				continue;
++			break;
++		}
+ 		child_terminated = 0;
++		panthera_serverloop_tracef("PANTHERA:sshd serverloop collect leave self=%ld",
++		    (long)getpid());
+ 	}
+ }
+ 
+@@ -346,6 +393,8 @@
+ 	sigset_t bsigset, osigset;
+ 
+ 	debug("Entering interactive session for SSH2.");
++	panthera_serverloop_tracef("PANTHERA:sshd serverloop2 enter self=%ld",
++	    (long)getpid());
+ 
+ 	if (sigemptyset(&bsigset) == -1 || sigaddset(&bsigset, SIGCHLD) == -1)
+ 		error_f("bsigset setup: %s", strerror(errno));
+@@ -376,6 +425,8 @@
+ 		 */
+ 		if (sigprocmask(SIG_BLOCK, &bsigset, &osigset) == -1)
+ 			error_f("bsigset sigprocmask: %s", strerror(errno));
++		panthera_serverloop_tracef("PANTHERA:sshd serverloop iter before collect child_term=%d self=%ld",
++		    child_terminated, (long)getpid());
+ 		collect_children(ssh);
+ 		wait_until_can_do_something(ssh, connection_in, connection_out,
+ 		    &pfd, &npfd_alloc, &npfd_active, &osigset,
+@@ -389,6 +440,8 @@
+ 			cleanup_exit(255);
+ 		}
+ 
++		panthera_serverloop_tracef("PANTHERA:sshd serverloop after wait cin=%d cout=%d child_term=%d",
++		    conn_in_ready, conn_out_ready, child_terminated);
+ 		channel_after_poll(ssh, pfd, npfd_active);
+ 		if (conn_in_ready &&
+ 		    process_input(ssh, connection_in) < 0)
+--- session.c.orig
++++ session.c
+@@ -88,6 +88,31 @@
+ #include "servconf.h"
+ #include "sshlogin.h"
+ #include "serverloop.h"
++
++#ifdef PANTHERA
++static void
++panthera_session_tracef(const char *fmt, ...)
++{
++	char buf[256];
++	va_list ap;
++	int fd;
++
++	va_start(ap, fmt);
++	(void)vsnprintf(buf, sizeof(buf), fmt, ap);
++	va_end(ap);
++	buf[sizeof(buf) - 1] = '\0';
++	(void)write(STDERR_FILENO, buf, strlen(buf));
++	(void)write(STDERR_FILENO, "\n", 1);
++	fd = open("/dev/console", O_WRONLY);
++	if (fd >= 0) {
++		(void)write(fd, buf, strlen(buf));
++		(void)write(fd, "\n", 1);
++		(void)close(fd);
++	}
++}
++#else
++#define panthera_session_tracef(...) do { } while (0)
++#endif
+ #include "canohost.h"
+ #include "session.h"
+ #include "kex.h"
+@@ -394,6 +419,9 @@
+ 	if (s == NULL)
+ 		fatal("do_exec_no_pty: no session");
+ 
++	panthera_session_tracef("PANTHERA:sshd session do_exec_no_pty enter sid=%d self=%ld command=%s",
++	    s->self, (long)getpid(), command == NULL ? "(shell)" : command);
++
+ 	/* Allocate pipes for communicating with the program. */
+ 	if (pipe(pin) == -1) {
+ 		error_f("pipe in: %.100s", strerror(errno));
+@@ -413,6 +441,8 @@
+ 		close(pout[1]);
+ 		return -1;
+ 	}
++	panthera_session_tracef("PANTHERA:sshd session pipes pin=%d/%d pout=%d/%d perr=%d/%d sid=%d",
++	    pin[0], pin[1], pout[0], pout[1], perr[0], perr[1], s->self);
+ #else
+ 	int inout[2], err[2];
+ 
+@@ -435,6 +465,8 @@
+ 	session_proctitle(s);
+ 
+ 	/* Fork the child. */
++	panthera_session_tracef("PANTHERA:sshd session fork enter sid=%d self=%ld",
++	    s->self, (long)getpid());
+ 	switch ((pid = fork())) {
+ 	case -1:
+ 		error_f("fork: %.100s", strerror(errno));
+@@ -454,6 +486,8 @@
+ 		return -1;
+ 	case 0:
+ 		is_child = 1;
++		panthera_session_tracef("PANTHERA:sshd session child start sid=%d self=%ld parent=%ld",
++		    s->self, (long)getpid(), (long)getppid());
+ 
+ 		/*
+ 		 * Create a new session and process group since the 4.4BSD
+@@ -502,6 +536,8 @@
+ #endif
+ 
+ 		/* Do processing for the child (exec command etc). */
++		panthera_session_tracef("PANTHERA:sshd session child do_child sid=%d self=%ld",
++		    s->self, (long)getpid());
+ 		do_child(ssh, s, command);
+ 		/* NOTREACHED */
+ 	default:
+@@ -512,6 +548,8 @@
+ 	cygwin_set_impersonation_token(INVALID_HANDLE_VALUE);
+ #endif
+ 
++	panthera_session_tracef("PANTHERA:sshd session parent child=%ld sid=%d self=%ld",
++	    (long)pid, s->self, (long)getpid());
+ 	s->pid = pid;
+ 	/* Set interactive/non-interactive mode. */
+ 	ssh_packet_set_interactive(ssh, s->display != NULL,
+@@ -530,6 +568,8 @@
+ 	close(pout[1]);
+ 	close(perr[1]);
+ 
++	panthera_session_tracef("PANTHERA:sshd session parent set_fds sid=%d child=%ld in=%d out=%d err=%d",
++	    s->self, (long)s->pid, pin[1], pout[0], perr[0]);
+ 	session_set_fds(ssh, s, pin[1], pout[0], perr[0],
+ 	    s->is_subsystem, 0);
+ #else
+@@ -694,6 +734,10 @@
+ 		if (strncmp(tty, "/dev/", 5) == 0)
+ 			tty += 5;
+ 	}
++
++	panthera_session_tracef("PANTHERA:sshd session do_exec sid=%d self=%ld ttyfd=%d subsystem=%d command=%s",
++	    s->self, (long)getpid(), s->ttyfd, s->is_subsystem,
++	    command == NULL ? "(shell)" : command);
+ 
+ 	verbose("Starting session: %s%s%s for %s from %.200s port %d id %d",
+ 	    session_type,
+@@ -1520,11 +1564,15 @@
+ 	int r = 0;
+ 
+ 	sshpkt_fmt_connection_id(ssh, remote_id, sizeof(remote_id));
++	panthera_session_tracef("PANTHERA:sshd do_child enter sid=%d self=%ld command=%s",
++	    s->self, (long)getpid(), command == NULL ? "(shell)" : command);
+ 
+ 	/* remove hostkey from the child's memory */
+ 	destroy_sensitive_data();
+ 	ssh_packet_clear_keys(ssh);
++	panthera_session_tracef("PANTHERA:sshd do_child cleared keys sid=%d self=%ld",
++	    s->self, (long)getpid());
+ 
+ 	/* Force a password change */
+ 	if (s->authctxt->force_pwchange) {
+ 		do_setusercontext(pw);
+@@ -1546,6 +1598,10 @@
+ 	/* When PAM is enabled we rely on it to do the nologin check */
+ 	if (!options.use_pam)
+ 		do_nologin(pw);
++	panthera_session_tracef("PANTHERA:sshd do_child before setusercontext sid=%d self=%ld",
++	    s->self, (long)getpid());
+ 	do_setusercontext(pw);
++	panthera_session_tracef("PANTHERA:sshd do_child after setusercontext sid=%d uid=%ld gid=%ld",
++	    s->self, (long)getuid(), (long)getgid());
+ 	/*
+ 	 * PAM session modules in do_setusercontext may have
+@@ -1574,6 +1630,8 @@
+ 	 * even if shell is overridden from login.conf
+ 	 */
+ 	env = do_setup_env(ssh, s, shell);
++	panthera_session_tracef("PANTHERA:sshd do_child after setup_env sid=%d shell=%s self=%ld",
++	    s->self, shell, (long)getpid());
+ 
+ #ifdef HAVE_LOGIN_CAP
+ 	shell = login_getcapstr(lc, "shell", (char *)shell, (char *)shell);
+@@ -1587,6 +1645,8 @@
+ 	 * ssh_remote_ipaddr there.
+ 	 */
+ 	child_close_fds(ssh);
++	panthera_session_tracef("PANTHERA:sshd do_child after child_close_fds sid=%d self=%ld",
++	    s->self, (long)getpid());
+ 
+ 	/*
+ 	 * Must take new environment into use so that .ssh/rc,
+@@ -1636,10 +1696,16 @@
+ 		if (r)
+ 			exit(1);
+ 	}
++	panthera_session_tracef("PANTHERA:sshd do_child after chdir sid=%d cwd=%s self=%ld",
++	    s->self, pw->pw_dir, (long)getpid());
+ 
+ 	closefrom(STDERR_FILENO + 1);
++	panthera_session_tracef("PANTHERA:sshd do_child after closefrom sid=%d self=%ld",
++	    s->self, (long)getpid());
+ 
+ 	do_rc_files(ssh, s, shell);
++	panthera_session_tracef("PANTHERA:sshd do_child after rc sid=%d self=%ld",
++	    s->self, (long)getpid());
+ 
+ 	/* restore SIGPIPE for child */
+ 	ssh_signal(SIGPIPE, SIG_DFL);
+@@ -1694,6 +1760,8 @@
+ 		/* Execute the shell. */
+ 		argv[0] = argv0;
+ 		argv[1] = NULL;
++		panthera_session_tracef("PANTHERA:sshd do_child exec shell=%s argv0=%s self=%ld",
++		    shell, argv0, (long)getpid());
+ 		execve(shell, argv, env);
+ 
+ 		/* Executing the shell failed. */
+@@ -1709,6 +1777,8 @@
+ 	argv[1] = "-c";
+ 	argv[2] = (char *) command;
+ 	argv[3] = NULL;
++	panthera_session_tracef("PANTHERA:sshd do_child exec command shell=%s shell0=%s command=%s self=%ld",
++	    shell, shell0, command, (long)getpid());
+ 	execve(shell, argv, env);
+ 	perror(shell);
+ 	exit(1);
+@@ -2255,6 +2299,9 @@
+ 	 * now that have a child and a pipe to the child,
+ 	 * we can activate our channel and register the fd's
+ 	 */
++	panthera_session_tracef("PANTHERA:sshd session_set_fds sid=%d chan=%d pid=%ld in=%d out=%d err=%d ignore_err=%d tty=%d",
++	    s->self, s->chanid, (long)s->pid, fdin, fdout, fderr,
++	    ignore_fderr, is_tty);
+ 	if (s->chanid == -1)
+ 		fatal("no channel for session %d", s->self);
+ 	channel_set_fds(ssh, s->chanid,
+@@ -2382,6 +2429,8 @@
+ 	int r;
+ 	char *note = NULL;
+ 
++	panthera_session_tracef("PANTHERA:sshd session_exit_message sid=%d chan=%d pid=%ld status=0x%x self=%ld",
++	    s->self, s->chanid, (long)s->pid, status, (long)getpid());
+ 	if ((c = channel_lookup(ssh, s->chanid)) == NULL)
+ 		fatal_f("session %d: no channel %d", s->self, s->chanid);
+ 
+@@ -2469,6 +2518,8 @@
+ session_close_by_pid(struct ssh *ssh, pid_t pid, int status)
+ {
+ 	Session *s = session_by_pid(pid);
++	panthera_session_tracef("PANTHERA:sshd session_close_by_pid pid=%ld status=0x%x found=%d self=%ld",
++	    (long)pid, status, s != NULL, (long)getpid());
+ 	if (s == NULL) {
+ 		debug_f("no session for pid %ld", (long)pid);
+ 		return;

@@ -1,0 +1,167 @@
+--- sftp-server.c.orig
++++ sftp-server.c
+@@ -82,6 +82,37 @@
+ /* Disable writes */
+ static int readonly;
+ 
++#ifdef PANTHERA_SFTP_SERVER_TRACE
++static unsigned long long panthera_sftp_loop_count;
++static unsigned long long panthera_sftp_stdin_reads;
++static unsigned long long panthera_sftp_stdout_writes;
++static unsigned long long panthera_sftp_process_count;
++static unsigned long long panthera_sftp_write_count;
++
++static void
++panthera_sftp_tracef(const char *fmt, ...)
++{
++	char buf[256];
++	va_list ap;
++	int fd;
++
++	va_start(ap, fmt);
++	(void)vsnprintf(buf, sizeof(buf), fmt, ap);
++	va_end(ap);
++	buf[sizeof(buf) - 1] = '\0';
++
++	fd = open("/dev/console", O_WRONLY | O_NONBLOCK);
++	if (fd >= 0) {
++		(void)write(fd, buf, strlen(buf));
++		(void)write(fd, "\n", 1);
++		(void)close(fd);
++	}
++}
++#define PANTHERA_SFTP_TRACEF(...) panthera_sftp_tracef(__VA_ARGS__)
++#else
++#define PANTHERA_SFTP_TRACEF(...) do { } while (0)
++#endif
++
+ /* Requests that are allowed/denied */
+ static char *request_allowlist, *request_denylist;
+ 
+@@ -872,9 +903,16 @@
+ 	else {
+ 		if (!(handle_to_flags(handle) & O_APPEND) &&
+ 		    lseek(fd, off, SEEK_SET) == -1) {
++#ifdef PANTHERA_SFTP_SERVER_TRACE
++			int saved_errno = errno;
++#endif
+ 			status = errno_to_portable(errno);
+ 			error_f("seek \"%.100s\": %s", handle_to_name(handle),
+ 			    strerror(errno));
++#ifdef PANTHERA_SFTP_SERVER_TRACE
++			PANTHERA_SFTP_TRACEF("PANTHERA:sftp write seek-fail id=%u off=%llu len=%zu errno=%d",
++			    id, (unsigned long long)off, len, saved_errno);
++#endif
+ 		} else {
+ /* XXX ATOMICIO ? */
+ 			ret = write(fd, data, len);
+@@ -891,6 +929,13 @@
+ 			}
+ 		}
+ 	}
++#ifdef PANTHERA_SFTP_SERVER_TRACE
++	panthera_sftp_write_count++;
++	PANTHERA_SFTP_TRACEF("PANTHERA:sftp write id=%u count=%llu off=%llu len=%zu fd=%d ret=%d errno=%d status=%d iq=%zu oq=%zu",
++	    id, panthera_sftp_write_count, (unsigned long long)off, len, fd,
++	    fd < 0 ? -1 : ret, errno, status, sshbuf_len(iqueue),
++	    sshbuf_len(oqueue));
++#endif
+ 	send_status(id, status);
+ 	free(data);
+ }
+@@ -1826,8 +1871,15 @@
+ 	if ((r = sshbuf_get_u8(iqueue, &type)) != 0)
+ 		fatal_fr(r, "parse type");
+ 
++#ifdef PANTHERA_SFTP_SERVER_TRACE
++	panthera_sftp_process_count++;
++#endif
++
+ 	switch (type) {
+ 	case SSH2_FXP_INIT:
++		PANTHERA_SFTP_TRACEF("PANTHERA:sftp process count=%llu type=INIT msg_len=%u iq=%zu oq=%zu",
++		    panthera_sftp_process_count, msg_len, sshbuf_len(iqueue),
++		    sshbuf_len(oqueue));
+ 		process_init();
+ 		init_done = 1;
+ 		break;
+@@ -1836,6 +1888,9 @@
+ 			fatal("Received extended request before init");
+ 		if ((r = sshbuf_get_u32(iqueue, &id)) != 0)
+ 			fatal_fr(r, "parse extended ID");
++		PANTHERA_SFTP_TRACEF("PANTHERA:sftp process count=%llu type=EXTENDED id=%u msg_len=%u iq=%zu oq=%zu",
++		    panthera_sftp_process_count, id, msg_len, sshbuf_len(iqueue),
++		    sshbuf_len(oqueue));
+ 		process_extended(id);
+ 		break;
+ 	default:
+@@ -1843,6 +1898,11 @@
+ 			fatal("Received %u request before init", type);
+ 		if ((r = sshbuf_get_u32(iqueue, &id)) != 0)
+ 			fatal_fr(r, "parse ID");
++		if (type == SSH2_FXP_OPEN || type == SSH2_FXP_CLOSE ||
++		    type == SSH2_FXP_WRITE)
++			PANTHERA_SFTP_TRACEF("PANTHERA:sftp process count=%llu type=%u id=%u msg_len=%u iq=%zu oq=%zu",
++			    panthera_sftp_process_count, type, id, msg_len,
++			    sshbuf_len(iqueue), sshbuf_len(oqueue));
+ 		for (i = 0; handlers[i].handler != NULL; i++) {
+ 			if (type == handlers[i].type) {
+ 				if (!request_permitted(&handlers[i])) {
+@@ -2034,6 +2094,8 @@
+ 	for (;;) {
+ 		struct pollfd pfd[2];
+ 
++		panthera_sftp_loop_count++;
++
+ 		memset(pfd, 0, sizeof pfd);
+ 		pfd[0].fd = pfd[1].fd = -1;
+ 
+@@ -2063,6 +2125,14 @@
+ 			error("poll: %s", strerror(errno));
+ 			sftp_server_cleanup_exit(2);
+ 		}
++#ifdef PANTHERA_SFTP_SERVER_TRACE
++		if ((pfd[0].revents | pfd[1].revents) != 0 &&
++		    (panthera_sftp_loop_count <= 16 ||
++		    (panthera_sftp_loop_count % 64) == 0))
++			PANTHERA_SFTP_TRACEF("PANTHERA:sftp loop count=%llu rev=0x%x/0x%x iq=%zu oq=%zu",
++			    panthera_sftp_loop_count, pfd[0].revents, pfd[1].revents,
++			    sshbuf_len(iqueue), sshbuf_len(oqueue));
++#endif
+ 
+ 		/* copy stdin to iqueue */
+ 		if (pfd[0].revents & (POLLIN|POLLHUP)) {
+@@ -2077,6 +2147,16 @@
+ 				}
+ 			} else if ((r = sshbuf_put(iqueue, buf, len)) != 0)
+ 				fatal_fr(r, "sshbuf_put");
++			else {
++#ifdef PANTHERA_SFTP_SERVER_TRACE
++				panthera_sftp_stdin_reads++;
++				if (panthera_sftp_stdin_reads <= 16 ||
++				    (panthera_sftp_stdin_reads % 64) == 0)
++					PANTHERA_SFTP_TRACEF("PANTHERA:sftp stdin-read count=%llu len=%zd iq=%zu oq=%zu",
++					    panthera_sftp_stdin_reads, len,
++					    sshbuf_len(iqueue), sshbuf_len(oqueue));
++#endif
++			}
+ 		}
+ 		/* send oqueue to stdout */
+ 		if (pfd[1].revents & (POLLOUT|POLLHUP)) {
+@@ -2092,6 +2172,16 @@
+ 				}
+ 			} else if ((r = sshbuf_consume(oqueue, len)) != 0)
+ 				fatal_fr(r, "consume");
++			else {
++#ifdef PANTHERA_SFTP_SERVER_TRACE
++				panthera_sftp_stdout_writes++;
++				if (panthera_sftp_stdout_writes <= 16 ||
++				    (panthera_sftp_stdout_writes % 64) == 0)
++					PANTHERA_SFTP_TRACEF("PANTHERA:sftp stdout-write count=%llu len=%zd iq=%zu oq=%zu",
++					    panthera_sftp_stdout_writes, len,
++					    sshbuf_len(iqueue), sshbuf_len(oqueue));
++#endif
++			}
+ 		}
+ 
+ 		/*

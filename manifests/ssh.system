@@ -1,0 +1,12 @@
+# Panthera SSH rootfs manifest
+# Format: kind|required|source|destination|producer|verification|condition|note
+# kind: file, dir, glob, generated
+
+file|optional|userland/openssh/sbin/sshd|/usr/sbin/sshd|userland/openssh/build_openssh.sh|SSH smoke|always|OpenSSH daemon
+glob|optional|userland/openssh/bin/*|/usr/bin/|userland/openssh/build_openssh.sh|SSH smoke|always|OpenSSH client utilities
+glob|optional|userland/openssh/libexec/*|/usr/libexec/|userland/openssh/build_openssh.sh|SSH smoke|always|OpenSSH helper programs
+file|optional|rootfs/etc/ssh/sshd_config|/etc/ssh/sshd_config|source tree|SSH smoke|always|OpenSSH daemon config
+file|optional|userland/configd/bin/sc_network_state_probe|/usr/bin/sc_network_state_probe|userland/configd/build_configd.sh|SSH smoke|always|SystemConfiguration IPv4 readiness probe for launch ordering
+file|optional|rootfs/usr/libexec/start_sshd.sh|/usr/libexec/start_sshd.sh|source tree|SSH smoke|always|launchd wrapper for SSH daemon
+file|optional|rootfs/System/Library/LaunchDaemons/com.panthera.sshd.plist|/System/Library/LaunchDaemons/com.panthera.sshd.plist|source tree|SSH smoke|always|SSH launch daemon
+generated|optional|userland/openssh/bin/ssh-keygen|/etc/ssh/ssh_host_rsa_key,/etc/ssh/ssh_host_ed25519_key|rootfs/scripts/stage_package_payload.sh|SSH smoke|always|generated OpenSSH host keys

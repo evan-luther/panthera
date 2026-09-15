@@ -1,0 +1,369 @@
+--- sshd.c.orig
++++ sshd.c
+@@ -479,6 +479,11 @@
+ {
+ 	gid_t gidset[1];
+ 
++#ifdef PANTHERA
++	panthera_sshd_tracef("PANTHERA:sshd privsep_preauth_child enter self=%ld uid=%u gid=%u",
++	    (long)getpid(), (unsigned)getuid(), (unsigned)getgid());
++#endif
++
+ 	/* Enable challenge-response authentication for privilege separation */
+ 	privsep_challenge_enable();
+ 
+@@ -495,11 +500,19 @@
+ 	/* Demote the child */
+ 	if (privsep_chroot) {
+ 		/* Change our root directory */
++#ifdef PANTHERA
++		panthera_sshd_tracef("PANTHERA:sshd privsep_preauth_child before chroot path=%s self=%ld",
++		    _PATH_PRIVSEP_CHROOT_DIR, (long)getpid());
++#endif
+ 		if (chroot(_PATH_PRIVSEP_CHROOT_DIR) == -1)
+ 			fatal("chroot(\"%s\"): %s", _PATH_PRIVSEP_CHROOT_DIR,
+ 			    strerror(errno));
+ 		if (chdir("/") == -1)
+ 			fatal("chdir(\"/\"): %s", strerror(errno));
++#ifdef PANTHERA
++		panthera_sshd_tracef("PANTHERA:sshd privsep_preauth_child after chroot self=%ld",
++		    (long)getpid());
++#endif
+ 
+ 		/* Drop our privileges */
+ 		debug3("privsep user:group %u:%u", (u_int)privsep_pw->pw_uid,
+@@ -507,7 +520,17 @@
+ 		gidset[0] = privsep_pw->pw_gid;
+ 		if (setgroups(1, gidset) == -1)
+ 			fatal("setgroups: %.100s", strerror(errno));
++#ifdef PANTHERA
++		panthera_sshd_tracef("PANTHERA:sshd privsep_preauth_child before uid drop user=%s uid=%u gid=%u self=%ld",
++		    privsep_pw->pw_name, (unsigned)privsep_pw->pw_uid,
++		    (unsigned)privsep_pw->pw_gid, (long)getpid());
++#endif
+ 		permanently_set_uid(privsep_pw);
++#ifdef PANTHERA
++		panthera_sshd_tracef("PANTHERA:sshd privsep_preauth_child after uid drop uid=%u euid=%u gid=%u egid=%u self=%ld",
++		    (unsigned)getuid(), (unsigned)geteuid(),
++		    (unsigned)getgid(), (unsigned)getegid(), (long)getpid());
++#endif
+ 	}
+ }
+ 
+@@ -519,6 +542,11 @@
+ 	struct ssh_sandbox *box = NULL;
+ 	sigset_t chldset, oldset;
+ 
++#ifdef PANTHERA
++	panthera_sshd_tracef("PANTHERA:sshd privsep_preauth enter self=%ld pmonitor=%p",
++	    (long)getpid(), (void *)pmonitor);
++#endif
++
+ 	/* Set up unprivileged child process to deal with network data */
+ 	pmonitor = monitor_init();
+ 	/* Store a pointer to the kex for later rekeying */
+@@ -541,6 +569,10 @@
+ 	if (pid == -1) {
+ 		fatal("fork of unprivileged child failed");
+ 	} else if (pid != 0) {
++#ifdef PANTHERA
++		panthera_sshd_tracef("PANTHERA:sshd privsep_preauth monitor parent self=%ld child=%ld",
++		    (long)getpid(), (long)pid);
++#endif
+ 		debug2("Network child is on pid %ld", (long)pid);
+ 
+ 		pmonitor->m_pid = pid;
+@@ -556,6 +588,10 @@
+ 		monitor_child_preauth(ssh, pmonitor);
+ 
+ 		/* Wait for the child's exit status */
++#ifdef PANTHERA
++		panthera_sshd_tracef("PANTHERA:sshd privsep_preauth monitor waiting self=%ld child=%ld",
++		    (long)getpid(), (long)pid);
++#endif
+ 		while (waitpid(pid, &status, 0) == -1) {
+ 			if (errno == EINTR)
+ 				continue;
+@@ -565,6 +601,10 @@
+ 		}
+ 		privsep_is_preauth = 0;
+ 		pmonitor->m_pid = -1;
++#ifdef PANTHERA
++		panthera_sshd_tracef("PANTHERA:sshd privsep_preauth monitor child reaped self=%ld child=%ld status=0x%x",
++		    (long)getpid(), (long)pid, status);
++#endif
+ 		if (WIFEXITED(status)) {
+ 			if (WEXITSTATUS(status) != 0)
+ 				fatal_f("preauth child exited with status %d",
+@@ -578,6 +618,10 @@
+ 		return 1;
+ 	} else {
+ 		/* child */
++#ifdef PANTHERA
++		panthera_sshd_tracef("PANTHERA:sshd privsep_preauth child enter self=%ld",
++		    (long)getpid());
++#endif
+ 		close(pmonitor->m_sendfd);
+ 		sigprocmask(SIG_SETMASK, &oldset, NULL);
+ 		close(pmonitor->m_log_recvfd);
+@@ -590,6 +634,10 @@
+ 		if (box != NULL)
+ 			ssh_sandbox_child(box);
+ 
++#ifdef PANTHERA
++		panthera_sshd_tracef("PANTHERA:sshd privsep_preauth child returning 0 self=%ld",
++		    (long)getpid());
++#endif
+ 		return 0;
+ 	}
+ }
+@@ -2248,7 +2296,14 @@
+ 	}
+ 
+ 	/* This is the child processing a new connection. */
++#ifdef PANTHERA
++	panthera_sshd_tracef("PANTHERA:sshd child-flow accepted pid=%ld sock_in=%d sock_out=%d newsock=%d rexec=%d inetd=%d",
++	    (long)getpid(), sock_in, sock_out, newsock, rexec_flag, inetd_flag);
++#endif
+ 	setproctitle("%s", "[accepted]");
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd child-flow setproctitle returned");
++#endif
+ 
+ 	/*
+ 	 * Create a new session and process group since the 4.4BSD
+@@ -2257,14 +2312,27 @@
+ 	 */
+ 	if (!debug_flag && !inetd_flag && setsid() == -1)
+ 		error("setsid: %.100s", strerror(errno));
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd child-flow setsid returned");
++#endif
+ 
+ 	if (rexec_flag) {
++#ifdef PANTHERA
++		panthera_sshd_tracef("PANTHERA:sshd child-flow rexec enter config0=%d config1=%d startup=%d",
++		    config_s[0], config_s[1], startup_pipe);
++#endif
+ 		debug("rexec start in %d out %d newsock %d pipe %d sock %d",
+ 		    sock_in, sock_out, newsock, startup_pipe, config_s[0]);
+ 		if (dup2(newsock, STDIN_FILENO) == -1)
+ 			debug3_f("dup2 stdin: %s", strerror(errno));
++#ifdef PANTHERA
++		panthera_sshd_tracef("PANTHERA:sshd child-flow dup2 stdin errno=%d", errno);
++#endif
+ 		if (dup2(STDIN_FILENO, STDOUT_FILENO) == -1)
+ 			debug3_f("dup2 stdout: %s", strerror(errno));
++#ifdef PANTHERA
++		panthera_sshd_tracef("PANTHERA:sshd child-flow dup2 stdout errno=%d", errno);
++#endif
+ 		if (startup_pipe == -1)
+ 			close(REEXEC_STARTUP_PIPE_FD);
+ 		else if (startup_pipe != REEXEC_STARTUP_PIPE_FD) {
+@@ -2273,32 +2341,57 @@
+ 			close(startup_pipe);
+ 			startup_pipe = REEXEC_STARTUP_PIPE_FD;
+ 		}
++#ifdef PANTHERA
++		panthera_sshd_tracef("PANTHERA:sshd child-flow startup pipe prepared errno=%d", errno);
++#endif
+ 
+ 		if (dup2(config_s[1], REEXEC_CONFIG_PASS_FD) == -1)
+ 			debug3_f("dup2 config_s: %s", strerror(errno));
+ 		close(config_s[1]);
++#ifdef PANTHERA
++		panthera_sshd_tracef("PANTHERA:sshd child-flow config fd prepared errno=%d", errno);
++#endif
+ 
+ 		ssh_signal(SIGHUP, SIG_IGN); /* avoid reset to SIG_DFL */
++#ifdef PANTHERA
++		panthera_sshd_tracef("PANTHERA:sshd child-flow execv enter path=%s", rexec_argv[0]);
++#endif
+ 		execv(rexec_argv[0], rexec_argv);
+ 
+ 		/* Reexec has failed, fall back and continue */
++#ifdef PANTHERA
++		panthera_sshd_tracef("PANTHERA:sshd child-flow execv failed errno=%d", errno);
++#endif
+ 		error("rexec of %s failed: %s", rexec_argv[0], strerror(errno));
+ 		recv_rexec_state(REEXEC_CONFIG_PASS_FD, NULL);
++#ifdef PANTHERA
++		panthera_sshd_trace("PANTHERA:sshd child-flow recv_rexec_state fallback returned");
++#endif
+ 		log_init(__progname, options.log_level,
+ 		    options.log_facility, log_stderr);
+ 
+ 		/* Clean up fds */
+ 		close(REEXEC_CONFIG_PASS_FD);
+ 		newsock = sock_out = sock_in = dup(STDIN_FILENO);
++#ifdef PANTHERA
++		panthera_sshd_tracef("PANTHERA:sshd child-flow fallback dup returned sock=%d errno=%d", sock_in, errno);
++#endif
+ 		if (stdfd_devnull(1, 1, 0) == -1)
+ 			error_f("stdfd_devnull failed");
+ 		debug("rexec cleanup in %d out %d newsock %d pipe %d sock %d",
+ 		    sock_in, sock_out, newsock, startup_pipe, config_s[0]);
+ 	}
++#ifdef PANTHERA
++	panthera_sshd_tracef("PANTHERA:sshd child-flow post-rexec pid=%ld sock_in=%d sock_out=%d newsock=%d rexeced=%d",
++	    (long)getpid(), sock_in, sock_out, newsock, rexeced_flag);
++#endif
+ 
+ 	/* Executed child processes don't need these. */
+ 	fcntl(sock_out, F_SETFD, FD_CLOEXEC);
+ 	fcntl(sock_in, F_SETFD, FD_CLOEXEC);
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd child-flow fcntl cloexec returned");
++#endif
+ 
+ 	/* We will not restart on SIGHUP since it no longer makes sense. */
+ 	ssh_signal(SIGALRM, SIG_DFL);
+@@ -2314,13 +2407,22 @@
+ 	 */
+ 	if ((ssh = ssh_packet_set_connection(NULL, sock_in, sock_out)) == NULL)
+ 		fatal("Unable to create connection");
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd child-flow packet connection returned");
++#endif
+ 	the_active_state = ssh;
+ 	ssh_packet_set_server(ssh);
+ 
+ 	check_ip_options(ssh);
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd child-flow check_ip_options returned");
++#endif
+ 
+ 	/* Prepare the channels layer */
+ 	channel_init_channels(ssh);
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd child-flow channel init returned");
++#endif
+ 	channel_set_af(ssh, options.address_family);
+ 	process_channel_timeouts(ssh, &options);
+ 	process_permitopen(ssh, &options);
+@@ -2329,11 +2431,17 @@
+ 	if (options.tcp_keep_alive && ssh_packet_connection_is_on_socket(ssh) &&
+ 	    setsockopt(sock_in, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on)) == -1)
+ 		error("setsockopt SO_KEEPALIVE: %.100s", strerror(errno));
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd child-flow keepalive returned");
++#endif
+ 
+ 	if ((remote_port = ssh_remote_port(ssh)) < 0) {
+ 		debug("ssh_remote_port failed");
+ 		cleanup_exit(255);
+ 	}
++#ifdef PANTHERA
++	panthera_sshd_tracef("PANTHERA:sshd child-flow remote_port=%d", remote_port);
++#endif
+ 
+ 	if (options.routing_domain != NULL)
+ 		set_process_rdomain(ssh, options.routing_domain);
+@@ -2344,6 +2452,9 @@
+ 	 * the socket goes away.
+ 	 */
+ 	remote_ip = ssh_remote_ipaddr(ssh);
++#ifdef PANTHERA
++	panthera_sshd_tracef("PANTHERA:sshd child-flow remote_ip=%s", remote_ip);
++#endif
+ 
+ #ifdef SSH_AUDIT_EVENTS
+ 	audit_connection_from(remote_ip, remote_port);
+@@ -2358,6 +2469,9 @@
+ 	    rdomain == NULL ? "" : " rdomain \"",
+ 	    rdomain == NULL ? "" : rdomain,
+ 	    rdomain == NULL ? "" : "\"");
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd child-flow connection logged");
++#endif
+ 	free(laddr);
+ 
+ 	/*
+@@ -2371,12 +2485,21 @@
+ 	ssh_signal(SIGALRM, grace_alarm_handler);
+ 	if (!debug_flag)
+ 		alarm(options.login_grace_time);
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd child-flow before banner exchange");
++#endif
+ 
+ 	if ((r = kex_exchange_identification(ssh, -1,
+ 	    options.version_addendum)) != 0)
+ 		sshpkt_fatal(ssh, r, "banner exchange");
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd child-flow banner exchange returned");
++#endif
+ 
+ 	ssh_packet_set_nonblocking(ssh);
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd child-flow packet nonblocking returned");
++#endif
+ 
+ 	/* allocate authentication context */
+ 	authctxt = xcalloc(1, sizeof(*authctxt));
+@@ -2407,6 +2530,10 @@
+ 	}
+ 
+ 	/* perform the key exchange */
++#ifdef PANTHERA
++	panthera_sshd_tracef("PANTHERA:sshd child-flow before do_ssh2_kex self=%ld",
++	    (long)getpid());
++#endif
+ 	/* authenticate user and start session */
+ 	do_ssh2_kex(ssh);
+ 	do_authentication2(ssh);
+@@ -2538,6 +2665,11 @@
+ 	struct kex *kex;
+ 	int r;
+ 
++#ifdef PANTHERA
++	panthera_sshd_tracef("PANTHERA:sshd do_ssh2_kex enter self=%ld",
++	    (long)getpid());
++#endif
++
+ 	if (options.rekey_limit || options.rekey_interval)
+ 		ssh_packet_set_rekey_limits(ssh, options.rekey_limit,
+ 		    options.rekey_interval);
+@@ -2554,6 +2686,10 @@
+ 	/* start key exchange */
+ 	if ((r = kex_setup(ssh, myproposal)) != 0)
+ 		fatal_r(r, "kex_setup");
++#ifdef PANTHERA
++	panthera_sshd_tracef("PANTHERA:sshd do_ssh2_kex kex_setup returned r=%d self=%ld",
++	    r, (long)getpid());
++#endif
+ 	kex_set_server_sig_algs(ssh, options.pubkey_accepted_algos);
+ 	kex = ssh->kex;
+ 
+@@ -2576,7 +2712,15 @@
+ 	kex->host_key_index=&get_hostkey_index;
+ 	kex->sign = sshd_hostkey_sign;
+ 
++#ifdef PANTHERA
++	panthera_sshd_tracef("PANTHERA:sshd do_ssh2_kex before dispatch block self=%ld done=%d",
++	    (long)getpid(), kex->done);
++#endif
+ 	ssh_dispatch_run_fatal(ssh, DISPATCH_BLOCK, &kex->done);
++#ifdef PANTHERA
++	panthera_sshd_tracef("PANTHERA:sshd do_ssh2_kex after dispatch block self=%ld done=%d",
++	    (long)getpid(), kex->done);
++#endif
+ 	kex_proposal_free_entries(myproposal);
+ 
+ #ifdef DEBUG_KEXDH
+@@ -2588,10 +2732,13 @@
+ 		fatal_fr(r, "send test");
+ #endif
+ 	debug("KEX done");
++#ifdef PANTHERA
++	panthera_sshd_tracef("PANTHERA:sshd do_ssh2_kex done self=%ld",
++	    (long)getpid());
++#endif
+ }
+ 
+-/* server specific fatal cleanup */
+-void
++/* server specific fatal cleanup */void
+ cleanup_exit(int i)
+ {
+ 	if (the_active_state != NULL && the_authctxt != NULL) {

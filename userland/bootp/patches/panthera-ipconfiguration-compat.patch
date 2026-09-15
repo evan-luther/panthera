@@ -1,0 +1,4506 @@
+--- IPConfiguration.bproj/Embedded-Info.plist
++++ IPConfiguration.bproj/Embedded-Info.plist
+@@ -94,7 +94,7 @@
+ 		<key>MinimumWakeIntervalSeconds</key>
+ 		<integer>900</integer>
+ 		<key>MustBroadcast</key>
+-		<false/>
++		<true/>
+ 		<key>RetryCount</key>
+ 		<integer>9</integer>
+ 		<key>RouterARPEnabled</key>
+--- IPConfiguration.bproj/FDSet.c
++++ IPConfiguration.bproj/FDSet.c
+@@ -56,18 +56,86 @@
+ struct FDCallout {
+ 	int			fd;
+ 	dispatch_source_t	source;
++	dispatch_block_t	cancel_block;
+ 	FDCalloutFuncRef	func;
+ 	void *			arg1;
+ 	void *			arg2;
+ };
+ 
++#ifdef PANTHERA
++static int
++panthera_fdset_trace_enabled(void)
++{
++	static int enabled = -1;
++
++	if (enabled < 0) {
++		const char *value = getenv("PANTHERA_IPCONFIGURATION_TRACE");
++		enabled = (value != NULL && value[0] != '\0'
++			   && strcmp(value, "0") != 0);
++	}
++	return (enabled != 0);
++}
++#endif
++
++static void
++FDCalloutCancel(void * context)
++{
++	FDCalloutRef	callout = (FDCalloutRef)context;
++
++	if (callout->cancel_block != NULL) {
++		callout->cancel_block();
++		Block_release(callout->cancel_block);
++		callout->cancel_block = NULL;
++	}
++	free(callout);
++}
++
++static void
++FDCalloutEvent(void * context)
++{
++	FDCalloutRef	callout = (FDCalloutRef)context;
++
++#ifdef PANTHERA
++	char		buffer[160];
++	int		len;
++	unsigned long	data = dispatch_source_get_data(callout->source);
++
++	if (panthera_fdset_trace_enabled()) {
++		len = snprintf(buffer, sizeof(buffer),
++			       "PANTHERA:FDCallout event fd=%d data=%lu enter\n",
++			       callout->fd, data);
++		if (len > 0) {
++			if ((size_t)len >= sizeof(buffer)) {
++				len = (int)sizeof(buffer) - 1;
++			}
++			(void)write(STDERR_FILENO, buffer, (size_t)len);
++		}
++	}
++#endif
++	if (callout->func != NULL) {
++		(*callout->func)(callout->arg1, callout->arg2);
++	}
++#ifdef PANTHERA
++	if (panthera_fdset_trace_enabled()) {
++		len = snprintf(buffer, sizeof(buffer),
++			       "PANTHERA:FDCallout event fd=%d returned\n",
++			       callout->fd);
++		if (len > 0) {
++			if ((size_t)len >= sizeof(buffer)) {
++				len = (int)sizeof(buffer) - 1;
++			}
++			(void)write(STDERR_FILENO, buffer, (size_t)len);
++		}
++	}
++#endif
++}
++
+ PRIVATE_EXTERN FDCalloutRef
+ FDCalloutCreate(int fd, FDCalloutFuncRef func,
+ 		void * arg1, void * arg2,
+ 		dispatch_block_t cancel_block)
+ {
+ 	FDCalloutRef		callout;
+-	dispatch_block_t	handler;
+ 	struct stat		sb;
+ 
+ 	if (fstat(fd, &sb) < 0) {
+@@ -81,17 +149,51 @@
+ 	callout->func = func;
+ 	callout->arg1 = arg1;
+ 	callout->arg2 = arg2;
++#ifdef PANTHERA
++	if (panthera_fdset_trace_enabled()) {
++		char buffer[160];
++		int len = snprintf(buffer, sizeof(buffer),
++				   "PANTHERA:FDCallout create fd=%d enter\n",
++				   fd);
++		if (len > 0) {
++			if ((size_t)len >= sizeof(buffer)) {
++				len = (int)sizeof(buffer) - 1;
++			}
++			(void)write(STDERR_FILENO, buffer, (size_t)len);
++		}
++	}
++#endif
++	if (cancel_block != NULL) {
++		callout->cancel_block = Block_copy(cancel_block);
++	}
+ 	callout->source = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ,
+ 						 fd, 0,
+ 						 IPConfigurationAgentQueue());
+-	dispatch_source_set_cancel_handler(callout->source, cancel_block);
+-	handler = ^{
+-		if (callout->func != NULL) {
+-			(*callout->func)(callout->arg1, callout->arg2);
++	if (callout->source == NULL) {
++		if (callout->cancel_block != NULL) {
++			Block_release(callout->cancel_block);
+ 		}
+-	};
+-	dispatch_source_set_event_handler(callout->source, handler);
++		free(callout);
++		return (NULL);
++	}
++	dispatch_set_context(callout->source, callout);
++	dispatch_source_set_cancel_handler_f(callout->source, FDCalloutCancel);
++	dispatch_source_set_event_handler_f(callout->source, FDCalloutEvent);
+ 	dispatch_activate(callout->source);
++#ifdef PANTHERA
++	if (panthera_fdset_trace_enabled()) {
++		char buffer[160];
++		int len = snprintf(buffer, sizeof(buffer),
++				   "PANTHERA:FDCallout create fd=%d activated\n",
++				   fd);
++		if (len > 0) {
++			if ((size_t)len >= sizeof(buffer)) {
++				len = (int)sizeof(buffer) - 1;
++			}
++			(void)write(STDERR_FILENO, buffer, (size_t)len);
++		}
++	}
++#endif
+ 	return (callout);
+ }
+ 
+@@ -103,10 +205,29 @@
+ 	if (callout == NULL) {
+ 		return;
+ 	}
++	callout->func = NULL;
++	callout->arg1 = NULL;
++	callout->arg2 = NULL;
++#ifdef PANTHERA
++	if (panthera_fdset_trace_enabled()) {
++		char buffer[160];
++		int len = snprintf(buffer, sizeof(buffer),
++				   "PANTHERA:FDCallout release fd=%d source=%p\n",
++				   callout->fd, callout->source);
++		if (len > 0) {
++			if ((size_t)len >= sizeof(buffer)) {
++				len = (int)sizeof(buffer) - 1;
++			}
++			(void)write(STDERR_FILENO, buffer, (size_t)len);
++		}
++	}
++#endif
+ 	if (callout->source) {
+ 		dispatch_source_cancel(callout->source);
+ 		dispatch_release(callout->source);
+ 		callout->source = NULL;
++		*callout_p = NULL;
++		return;
+ 	}
+ 	free(callout);
+ 	*callout_p = NULL;
+--- IPConfiguration.bproj/IPConfigurationAgentUtil.c
++++ IPConfiguration.bproj/IPConfigurationAgentUtil.c
+@@ -41,11 +41,12 @@
+ PRIVATE_EXTERN dispatch_queue_t
+ IPConfigurationAgentQueue(void)
+ {
+-	STATIC dispatch_queue_t	queue;
++	STATIC dispatch_queue_t		queue;
++	STATIC dispatch_once_t		once;
+ 
+-	if (queue == NULL) {
++	dispatch_once(&once, ^{
+ 		queue = dispatch_queue_create("IPConfigurationAgentQueue",
+ 					      NULL);
+-	}
++	});
+ 	return (queue);
+ }
+--- IPConfiguration.bproj/Info.plist
++++ IPConfiguration.bproj/Info.plist
+@@ -97,7 +97,7 @@
+ 		<key>MinimumWakeIntervalSeconds</key>
+ 		<integer>900</integer>
+ 		<key>MustBroadcast</key>
+-		<false/>
++		<true/>
+ 		<key>RetryCount</key>
+ 		<integer>9</integer>
+ 		<key>RouterARPEnabled</key>
+--- IPConfiguration.bproj/arp_session.c
++++ IPConfiguration.bproj/arp_session.c
+@@ -122,6 +122,11 @@
+ 
+ typedef struct arp_if_session arp_if_session_t;
+ 
++typedef struct {
++    arp_client_t		client;
++    dispatch_source_t		source;
++} arp_callback_context_t;
++
+ typedef enum {
+     arp_client_command_none_e = 0,
+     arp_client_command_probe_e = 1,
+@@ -378,17 +383,10 @@
+     if (source != NULL) {
+ 	client->callback_source = NULL;
+ 	dispatch_source_cancel(source);
+-	dispatch_release(source);
+     }
+     return;
+ }
+ 
+-/*
+- * Function: arp_client_callback
+- *
+- * Purpose:
+- *   Call the supplied function with the appropriate result.
+- */
+ static void
+ arp_client_callback(arp_client_t client)
+ {
+@@ -440,11 +438,40 @@
+ static void
+ arp_client_do_callback(arp_client_t client)
+ {
+-    arp_client_cancel_callback(client);
+     arp_client_callback(client);
+     return;
+ }
+ 
++static void
++arp_client_do_callback_context(void * context)
++{
++    arp_callback_context_t *	callback_context;
++    arp_client_t		client;
++    dispatch_source_t		source;
++
++    callback_context = (arp_callback_context_t *)context;
++    client = callback_context->client;
++    source = callback_context->source;
++    (void)dispatch_source_get_data(source);
++    if (client->callback_source == source) {
++	client->callback_source = NULL;
++    }
++    dispatch_source_cancel(source);
++    arp_client_do_callback(client);
++}
++
++static void
++arp_client_callback_source_cancel(void * context)
++{
++    arp_callback_context_t *	callback_context;
++    dispatch_source_t		source;
++
++    callback_context = (arp_callback_context_t *)context;
++    source = callback_context->source;
++    free(callback_context);
++    dispatch_release(source);
++}
++
+ /*
+  * Function: arp_client_schedule_callback
+  * Purpose:
+@@ -453,21 +480,32 @@
+ static void
+ arp_client_schedule_callback(arp_client_t client)
+ {
+-    dispatch_block_t	handler;
++    arp_callback_context_t *	callback_context;
+     dispatch_source_t	source;
+ 
+     arp_client_cancel_callback(client);
++    callback_context = malloc(sizeof(*callback_context));
++    if (callback_context == NULL) {
++	arp_client_callback(client);
++	return;
++    }
+     source = dispatch_source_create(DISPATCH_SOURCE_TYPE_DATA_ADD,
+ 				    0,
+ 				    0,
+ 				    IPConfigurationAgentQueue());
+-    handler = ^{
+-	arp_client_do_callback(client);
+-    };
+-    dispatch_source_set_event_handler(source, handler);
++    if (source == NULL) {
++	free(callback_context);
++	arp_client_callback(client);
++	return;
++    }
++    callback_context->client = client;
++    callback_context->source = source;
++    dispatch_set_context(source, callback_context);
++    dispatch_source_set_event_handler_f(source, arp_client_do_callback_context);
++    dispatch_source_set_cancel_handler_f(source, arp_client_callback_source_cancel);
++    client->callback_source = source;
+     dispatch_activate(source);
+     dispatch_source_merge_data(source, 1);
+-    client->callback_source = source;
+     return;
+ }
+ 
+--- IPConfiguration.bproj/bootp_session.c
++++ IPConfiguration.bproj/bootp_session.c
+@@ -68,6 +68,71 @@
+ #include "bootp_transmit.h"
+ #include "timer.h"
+ 
++#ifdef PANTHERA
++#include <stdarg.h>
++#include <stdint.h>
++
++static int
++panthera_bootp_trace_enabled(void)
++{
++    static int enabled = -1;
++
++    if (enabled < 0) {
++	const char *value = getenv("PANTHERA_IPCONFIGURATION_TRACE");
++	enabled = (value != NULL && value[0] != '\0' && strcmp(value, "0") != 0);
++    }
++    return (enabled != 0);
++}
++
++static void
++panthera_bootp_trace(const char *message)
++{
++    if (!panthera_bootp_trace_enabled()) {
++	return;
++    }
++    (void)write(STDERR_FILENO, message, strlen(message));
++}
++
++static void
++panthera_bootp_tracef(const char *fmt, ...)
++{
++    char buffer[256];
++    va_list ap;
++    int len;
++
++    if (!panthera_bootp_trace_enabled()) {
++	return;
++    }
++    va_start(ap, fmt);
++    len = vsnprintf(buffer, sizeof(buffer), fmt, ap);
++    va_end(ap);
++    if (len <= 0) {
++	return;
++    }
++    if ((size_t)len >= sizeof(buffer)) {
++	len = (int)sizeof(buffer) - 1;
++    }
++    (void)write(STDERR_FILENO, buffer, (size_t)len);
++}
++
++static ssize_t
++panthera_recvmsg(int fd, struct msghdr *msg, int flags)
++{
++    ssize_t n = recvmsg(fd, msg, flags);
++
++    /*
++     * Panthera's current BSD syscall return path can expose a 32-bit -1 as a
++     * zero-extended value while leaving errno set. Treat that ABI shape as the
++     * Darwin recvmsg failure it represents so nonblocking socket drains can
++     * terminate at EAGAIN instead of parsing an absent packet.
++     */
++    if ((uint64_t)n == UINT32_MAX && errno != 0) {
++	return (-1);
++    }
++    return (n);
++}
++#endif
++
+ static bool S_verbose;
+ 
+ struct bootp_session {
+@@ -103,7 +168,14 @@
+     int 			opt;
+     int				sockfd;
+ 
++#ifdef PANTHERA
++    panthera_bootp_trace("PANTHERA:BOOTP open socket enter\n");
++#endif
+     sockfd = socket(AF_INET, SOCK_DGRAM, 0);
++#ifdef PANTHERA
++    panthera_bootp_tracef("PANTHERA:BOOTP open socket returned fd=%d errno=%d\n",
++			  sockfd, errno);
++#endif
+     if (sockfd < 0) {
+ 	my_log(LOG_ERR, "socket failed, %s",
+ 	       strerror(errno));
+@@ -113,25 +185,49 @@
+     me.sin_family = AF_INET;
+     me.sin_port = htons(client_port);
+     me.sin_addr.s_addr = htonl(INADDR_ANY);
++#ifdef PANTHERA
++    panthera_bootp_trace("PANTHERA:BOOTP bind enter\n");
++#endif
+     status = bind(sockfd, (struct sockaddr *)&me, sizeof(me));
++#ifdef PANTHERA
++    panthera_bootp_trace("PANTHERA:BOOTP bind returned\n");
++#endif
+     if (status != 0) {
+ 	my_log(LOG_ERR, "bootp_session: bind port %d failed, %s",
+ 	       client_port, strerror(errno));
+ 	goto failed;
+     }
+     opt = 1;
++#ifdef PANTHERA
++    panthera_bootp_trace("PANTHERA:BOOTP setsockopt broadcast enter\n");
++#endif
+     status = setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, &opt, sizeof(opt));
++#ifdef PANTHERA
++    panthera_bootp_trace("PANTHERA:BOOTP setsockopt broadcast returned\n");
++#endif
+     if (status < 0) {
+ 	my_log(LOG_ERR, "setsockopt SO_BROADCAST failed, %s",
+ 	       strerror(errno));
+ 	goto failed;
+     }
++#ifdef PANTHERA
++    panthera_bootp_trace("PANTHERA:BOOTP ioctl nonblock enter\n");
++#endif
+     status = ioctl(sockfd, FIONBIO, &opt);
++#ifdef PANTHERA
++    panthera_bootp_trace("PANTHERA:BOOTP ioctl nonblock returned\n");
++#endif
+     if (status < 0) {
+ 	my_log(LOG_ERR, "ioctl FIONBIO failed, %s", strerror(errno));
+ 	goto failed;
+     }
++#ifdef PANTHERA
++    panthera_bootp_trace("PANTHERA:BOOTP setsockopt recvif enter\n");
++#endif
+     status = setsockopt(sockfd, IPPROTO_IP, IP_RECVIF, &opt, sizeof(opt));
++#ifdef PANTHERA
++    panthera_bootp_trace("PANTHERA:BOOTP setsockopt recvif returned\n");
++#endif
+     if (status < 0) {
+ 	my_log(LOG_ERR, "setsockopt IP_RECVIF failed, %s", 
+ 	       strerror(errno));
+@@ -320,6 +416,10 @@
+     my_log(LOG_DEBUG,
+ 	   "bootp_session_open_socket(): opened socket %d",
+ 	   sockfd);
++#ifdef PANTHERA
++    panthera_bootp_tracef("PANTHERA:BOOTP session opened socket fd=%d\n",
++			  sockfd);
++#endif
+     bootp_session_enable_receive(session, sockfd);
+     return (TRUE);
+ }
+@@ -340,13 +440,21 @@
+     session->read_fd_refcount--;
+     my_log(LOG_DEBUG, "bootp_client_close_socket(%s): refcount %d",
+ 	   if_name(client->if_p), session->read_fd_refcount);
++#ifdef PANTHERA
++    panthera_bootp_tracef("PANTHERA:BOOTP client close if=%s refcount=%d read_fd=%p\n",
++			  if_name(client->if_p), session->read_fd_refcount,
++			  session->read_fd);
++#endif
+     client->fd_open = FALSE;
+     if (session->read_fd_refcount == 0) {
+ 	struct timeval tv;
+ 
++#ifdef PANTHERA
++	panthera_bootp_trace("PANTHERA:BOOTP close socket delayed\n");
++#else
+ 	my_log(LOG_DEBUG,
+ 	       "bootp_client_close_socket(): scheduling delayed close");
+-
++#endif
+ 	tv.tv_sec = 1; /* close it after 1 second of non-use */
+ 	tv.tv_usec = 0;
+ 	timer_set_relative(session->timer_callout, tv,
+@@ -368,13 +476,25 @@
+     session->read_fd_refcount++;
+     my_log(LOG_DEBUG, "bootp_client_open_socket (%s): refcount %d",
+ 	   if_name(client->if_p), session->read_fd_refcount);
++#ifdef PANTHERA
++    panthera_bootp_tracef("PANTHERA:BOOTP client open if=%s refcount=%d read_fd=%p\n",
++			  if_name(client->if_p), session->read_fd_refcount,
++			  session->read_fd);
++#endif
+     client->fd_open = TRUE;
+     if (session->read_fd_refcount > 1) {
+ 	/* already open */
++#ifdef PANTHERA
++	panthera_bootp_trace("PANTHERA:BOOTP client open reused refcount\n");
++#endif
+ 	return (TRUE);
+     }
+     if (session->read_fd != NULL) {
+ 	my_log(LOG_DEBUG, "bootp_client_open_socket(): socket is still open");
++#ifdef PANTHERA
++	panthera_bootp_tracef("PANTHERA:BOOTP client open reused fd=%d\n",
++			      FDCalloutGetFD(session->read_fd));
++#endif
+     }
+     else if (!bootp_session_open_socket(session)) {
+ 	my_log(LOG_NOTICE, "bootp_session_open_socket failed");
+@@ -395,11 +515,23 @@
+     client->receive = func;
+     client->receive_arg1 = arg1;
+     client->receive_arg2 = arg2;
++#ifdef PANTHERA
++    panthera_bootp_trace("PANTHERA:BOOTP receive socket open enter\n");
+     if (bootp_client_open_socket(client) == FALSE) {
++	panthera_bootp_trace("PANTHERA:BOOTP receive socket open failed\n");
+ 	my_log(LOG_ERR, "bootp_client_enable_receive(%s): failed",
+ 	       if_name(client->if_p));
+     }
++    else {
++	panthera_bootp_trace("PANTHERA:BOOTP receive socket open returned\n");
++    }
+     return;
++#endif
++    if (bootp_client_open_socket(client) == FALSE) {
++	my_log(LOG_ERR, "bootp_client_enable_receive(%s): failed",
++	       if_name(client->if_p));
++    }
++    return;
+ }
+ 
+ void
+@@ -488,6 +620,7 @@
+     int			if_index = 0;
+     boolean_t		needs_close = FALSE;
+     boolean_t		ok_to_send = TRUE;
++    int			panthera_hwtype = if_link_arptype(client->if_p);
+     /*
+      * send_buf is cast to some struct types containing short fields;
+      * force it to be aligned as much as an int
+@@ -518,9 +651,14 @@
+ 	if (session->read_fd != NULL) {
+ 	    sockfd = FDCalloutGetFD(session->read_fd);
+ 	}
++#ifdef PANTHERA
++	if (sockfd >= 0 && dest_ip.s_addr == INADDR_BROADCAST) {
++	    panthera_bootp_trace("PANTHERA:BOOTP transmit using receive socket bpf-first\n");
++	}
++#endif
+ 	error = bootp_transmit(sockfd, send_buf,
+ 			       if_name(client->if_p),
+-			       if_link_arptype(client->if_p), NULL,
++			       panthera_hwtype, NULL,
+ 			       dest_ip, src_ip, dest_port, src_port, data, len);
+     }
+     else {
+@@ -547,12 +685,37 @@
+ {
+     static bootp_session_t session;
+ 
++#ifdef PANTHERA
++    panthera_bootp_tracef("PANTHERA:BOOTP session get enter cached=%p\n", session);
++#endif
+     if (session == NULL) {
++#ifdef PANTHERA
++	panthera_bootp_trace("PANTHERA:BOOTP session alloc enter\n");
++#endif
+ 	session = malloc(sizeof(*session));
++#ifdef PANTHERA
++	panthera_bootp_tracef("PANTHERA:BOOTP session alloc returned ptr=%p\n", session);
++	panthera_bootp_trace("PANTHERA:BOOTP session bzero enter\n");
++#endif
+ 	bzero(session, sizeof(*session));
++#ifdef PANTHERA
++	panthera_bootp_trace("PANTHERA:BOOTP session bzero returned\n");
++	panthera_bootp_trace("PANTHERA:BOOTP session dynarray init enter\n");
++#endif
+ 	dynarray_init(&session->clients, bootp_client_free_element, NULL);
++#ifdef PANTHERA
++	panthera_bootp_trace("PANTHERA:BOOTP session dynarray init returned\n");
++	panthera_bootp_trace("PANTHERA:BOOTP session timer init enter\n");
++#endif
+ 	session->timer_callout = timer_callout_init("bootp_session");
++#ifdef PANTHERA
++	panthera_bootp_tracef("PANTHERA:BOOTP session timer init returned ptr=%p\n",
++			      session->timer_callout);
++#endif
+     }
++#ifdef PANTHERA
++    panthera_bootp_tracef("PANTHERA:BOOTP session get returned ptr=%p\n", session);
++#endif
+     return (session);
+ }
+ 
+@@ -561,6 +724,9 @@
+ {
+     bootp_session_t session;
+ 
++#ifdef PANTHERA
++    panthera_bootp_tracef("PANTHERA:BOOTP session init enter port=%d\n", client_port);
++#endif
+     session = bootp_session_get();
+     if (session->client_port != 0) {
+ 	my_log(LOG_ERR,
+@@ -568,6 +734,9 @@
+ 	return;
+     }
+     session->client_port = client_port;
++#ifdef PANTHERA
++    panthera_bootp_tracef("PANTHERA:BOOTP session init returned port=%d\n", client_port);
++#endif
+     return;
+ }
+ 
+@@ -583,10 +752,17 @@
+ 	return;
+     }
+ 
++#ifdef PANTHERA
++    panthera_bootp_tracef("PANTHERA:BOOTP deliver enter if=%s size=%d\n",
++			  ifname, size);
++#endif
+     bzero(&event, sizeof(event));
+     event.data = (struct dhcp *)data;
+     event.size = size;
+     dhcpol_parse_packet(&event.options, event.data, size, NULL);
++#ifdef PANTHERA
++    panthera_bootp_trace("PANTHERA:BOOTP deliver parse returned\n");
++#endif
+     if (S_verbose) {
+ 	CFMutableStringRef	str;
+ 
+@@ -614,11 +790,26 @@
+ 	    continue;
+ 	}
+ 	if (client->receive) {
++#ifdef PANTHERA
++	    panthera_bootp_tracef("PANTHERA:BOOTP deliver callback enter index=%d\n",
++				  i);
++#endif
+ 	    (*client->receive)(client->receive_arg1, client->receive_arg2,
+ 			       &event);
++#ifdef PANTHERA
++	    panthera_bootp_tracef("PANTHERA:BOOTP deliver callback returned index=%d\n",
++				  i);
++#endif
+ 	}
+     }
++#ifdef PANTHERA
++    panthera_bootp_trace("PANTHERA:BOOTP deliver options free enter\n");
++#endif
+     dhcpol_free(&event.options); /* free malloc'd data */
++#ifdef PANTHERA
++    panthera_bootp_trace("PANTHERA:BOOTP deliver options free returned\n");
++    panthera_bootp_trace("PANTHERA:BOOTP deliver returned\n");
++#endif
+     return;
+ }
+ 
+@@ -660,44 +851,83 @@
+ static void
+ bootp_session_read(void * arg1, void * arg2)
+ {
+-    char	 		control[512];
+-    struct sockaddr_in 		from;
+-    char			ifname[IFNAMSIZ + 1];
+-    struct iovec 	 	iov;
+-    struct msghdr 		msg;
+-    ssize_t 			n;
+-    uint32_t 			receive_buf[1500/(sizeof(uint32_t))];
+     bootp_session_t 		session = (bootp_session_t)arg1;
+ 
+-    msg.msg_name = (caddr_t)&from;
+-    msg.msg_namelen = sizeof(from);
+-    msg.msg_iov = &iov;
+-    msg.msg_iovlen = 1;
+-    msg.msg_control = control;
+-    msg.msg_controllen = sizeof(control);
+-    msg.msg_flags = 0;
+-    iov.iov_base = (caddr_t)receive_buf;
+-    iov.iov_len = sizeof(receive_buf);
+-    n = recvmsg(FDCalloutGetFD(session->read_fd), &msg, 0);
+-    if (n > 0) {
+-	if (msghdr_copy_ifname(&msg, ifname, sizeof(ifname))) {
+-	    /* ALIGN: receive_buf aligned to uint64_t bytes */
+-	    bootp_session_deliver(session, ifname, &from.sin_addr,
+-				  (void *)receive_buf, (int)n);
++    for (;;) {
++	char	 		control[512];
++	struct sockaddr_in 	from;
++	char			ifname[IFNAMSIZ + 1];
++	struct iovec 	 	iov;
++	struct msghdr 		msg;
++	ssize_t 		n;
++	uint32_t 		receive_buf[1500/(sizeof(uint32_t))];
++
++	bzero(&from, sizeof(from));
++	bzero(ifname, sizeof(ifname));
++	bzero(control, sizeof(control));
++	bzero(&msg, sizeof(msg));
++
++	msg.msg_name = (caddr_t)&from;
++	msg.msg_namelen = sizeof(from);
++	msg.msg_iov = &iov;
++	msg.msg_iovlen = 1;
++	msg.msg_control = control;
++	msg.msg_controllen = sizeof(control);
++	msg.msg_flags = 0;
++	iov.iov_base = (caddr_t)receive_buf;
++	iov.iov_len = sizeof(receive_buf);
++#ifdef PANTHERA
++	panthera_bootp_trace("PANTHERA:BOOTP receive read enter\n");
++#endif
++	errno = 0;
++#ifdef PANTHERA
++	n = panthera_recvmsg(FDCalloutGetFD(session->read_fd), &msg, 0);
++#else
++	n = recvmsg(FDCalloutGetFD(session->read_fd), &msg, 0);
++#endif
++#ifdef PANTHERA
++	panthera_bootp_tracef("PANTHERA:BOOTP receive read returned n=%ld errno=%d\n",
++			      (long)n, errno);
++#endif
++	if (n > 0) {
++	    if (msghdr_copy_ifname(&msg, ifname, sizeof(ifname))) {
++#ifdef PANTHERA
++		panthera_bootp_tracef("PANTHERA:BOOTP receive deliver if=%s size=%ld\n",
++				      ifname, (long)n);
++#endif
++		/* ALIGN: receive_buf aligned to uint64_t bytes */
++		bootp_session_deliver(session, ifname, &from.sin_addr,
++				      (void *)receive_buf, (int)n);
++#ifdef PANTHERA
++		panthera_bootp_trace("PANTHERA:BOOTP receive deliver returned\n");
++#endif
++	    }
++#ifdef PANTHERA
++	    else {
++		panthera_bootp_trace("PANTHERA:BOOTP receive missing ifname\n");
++	    }
++#endif
++	    continue;
+ 	}
+-    }
+-    else if (n < 0) {
+-	int	error = errno;
++	else if (n < 0) {
++	    int	error = errno;
+ 
+-	if (error != EAGAIN) {
++	    if (error == EAGAIN || error == EWOULDBLOCK) {
++		break;
++	    }
+ 	    my_log(LOG_ERR, "bootp_session_read(%d): recvmsg failed, %s",
+ 		   FDCalloutGetFD(session->read_fd), strerror(error));
+ 	    if (error == ENOTCONN) {
+-		/* close and re-open (rdar://39423537) */
+-		bootp_session_schedule_close(session);
++		    /* close and re-open (rdar://39423537) */
++		    bootp_session_schedule_close(session);
+ 	    }
++	    break;
+ 	}
++	break;
+     }
++#ifdef PANTHERA
++    panthera_bootp_trace("PANTHERA:BOOTP receive read handler returned\n");
++#endif
+     return;
+ }
+ 
+--- IPConfiguration.bproj/dhcp.c
++++ IPConfiguration.bproj/dhcp.c
+@@ -44,6 +44,9 @@
+ #include <unistd.h>
+ #include <string.h>
+ #include <stdio.h>
++#ifdef PANTHERA
++#include <stdarg.h>
++#endif
+ #include <sys/types.h>
+ #include <sys/wait.h>
+ #include <sys/errno.h>
+@@ -82,6 +85,51 @@
+ #include "symbol_scope.h"
+ #include "cfutil.h"
+ 
++#ifdef PANTHERA
++static int
++panthera_dhcp_trace_enabled(void)
++{
++    static int enabled = -1;
++
++    if (enabled < 0) {
++	const char *value = getenv("PANTHERA_IPCONFIGURATION_TRACE");
++	enabled = (value != NULL && value[0] != '\0' && strcmp(value, "0") != 0);
++    }
++    return (enabled != 0);
++}
++
++static void
++panthera_dhcp_trace(const char *message)
++{
++    if (!panthera_dhcp_trace_enabled()) {
++        return;
++    }
++    (void)write(STDERR_FILENO, message, strlen(message));
++}
++
++static void
++panthera_dhcp_tracef(const char *fmt, ...)
++{
++    char buffer[512];
++    va_list ap;
++    int len;
++
++    if (!panthera_dhcp_trace_enabled()) {
++        return;
++    }
++    va_start(ap, fmt);
++    len = vsnprintf(buffer, sizeof(buffer), fmt, ap);
++    va_end(ap);
++    if (len <= 0) {
++        return;
++    }
++    if ((size_t)len >= sizeof(buffer)) {
++        len = (int)sizeof(buffer) - 1;
++    }
++    (void)write(STDERR_FILENO, buffer, (size_t)len);
++}
++#endif
++
+ #define SUGGESTED_LEASE_LENGTH		(60 * 60 * 24 * 30 * 3) /* 3 months */
+ 
+ typedef struct {
+@@ -657,6 +705,12 @@
+ verify_packet(bootp_receive_data_t * pkt, u_int32_t xid, interface_t * if_p, 
+ 	      dhcp_msgtype_t * msgtype_p, struct in_addr * server_ip)
+ {
++#ifdef PANTHERA
++    panthera_dhcp_tracef("PANTHERA:DHCP verify enter if=%s xid=0x%lx pkt_xid=0x%lx size=%u\n",
++			 if_name(if_p), (unsigned long)xid,
++			 (unsigned long)ntohl(pkt->data->dp_xid),
++			 (unsigned int)pkt->size);
++#endif
+     if (dhcp_packet_match((struct bootp *)pkt->data, xid, 
+ 			  (uint8_t) if_link_arptype(if_p),
+ 			  if_link_address(if_p),
+@@ -675,13 +729,24 @@
+ 	    || *msgtype_p == dhcp_msgtype_request_e
+ 	    || *msgtype_p == dhcp_msgtype_inform_e) {
+ 	    /* BOOTP packet */
++#ifdef PANTHERA
++	    panthera_dhcp_tracef("PANTHERA:DHCP verify rejected invalid-msg type=%d\n",
++				 *msgtype_p);
++#endif
+ 	    return (FALSE);
+ 	}
+ 	server_ip->s_addr = 0;
+ 	(void)get_server_identifier(&pkt->options, server_ip);
+ 	/* matching DHCP packet */
++#ifdef PANTHERA
++	panthera_dhcp_tracef("PANTHERA:DHCP verify ok type=%d server=" IP_FORMAT "\n",
++			     *msgtype_p, IP_LIST(server_ip));
++#endif
+ 	return (TRUE);
+     }
++#ifdef PANTHERA
++    panthera_dhcp_trace("PANTHERA:DHCP verify rejected packet-match\n");
++#endif
+     return (FALSE);
+ }
+ 
+@@ -1628,8 +1693,14 @@
+ 			     pkt, pkt_size,
+ 			     dhcp->lease.ssid, dhcp->lease.networkID);
+     if (write_lease) {
++#ifdef PANTHERA
++	panthera_dhcp_trace("PANTHERA:DHCP lease write enter\n");
++#endif
+ 	DHCPLeaseListWrite(&dhcp->lease_list,
+ 			   if_name(if_p), cid_type, cid, cid_length);
++#ifdef PANTHERA
++	panthera_dhcp_trace("PANTHERA:DHCP lease write returned\n");
++#endif
+     }
+     return;
+ }
+@@ -1837,11 +1908,21 @@
+     else {
+ 	wait_for_link_active = link_status_is_inactive(link_status_p);
+     }
++#ifdef PANTHERA
++    panthera_dhcp_tracef("PANTHERA:DHCP check link if=%s event=%d valid=%d active=%d wait=%d\n",
++			 if_name(if_p), (int)event_id,
++			 link_status_p->valid ? 1 : 0,
++			 link_status_p->active ? 1 : 0,
++			 wait_for_link_active ? 1 : 0);
++#endif
+     if (wait_for_link_active) {
+ 	/* ensure that we'll retry when the link goes back up */
+ 	dhcp->try = 0;
+ 	dhcp->state = dhcp_cstate_inactive_e;
+ 	dhcp_cancel_pending_events(service_p);
++#ifdef PANTHERA
++	panthera_dhcp_trace("PANTHERA:DHCP check link waiting for active link\n");
++#endif
+ 	return;
+     }
+     dhcp->conflicting_address.s_addr = 0;
+@@ -1915,7 +1996,13 @@
+     if (event_id == IFEventID_renew_e
+ 	|| dhcp->state != dhcp_cstate_init_e
+ 	|| dhcp->try != 1) {
++#ifdef PANTHERA
++	panthera_dhcp_trace("PANTHERA:DHCP check link start init\n");
++#endif
+ 	dhcp_init(service_p, IFEventID_start_e, NULL);
++#ifdef PANTHERA
++	panthera_dhcp_trace("PANTHERA:DHCP check link start init returned\n");
++#endif
+ 	return;
+     }
+     return;
+@@ -2164,13 +2251,28 @@
+ {
+ #pragma unused(arg2)
+ #pragma unused(arg3)
++#ifdef PANTHERA
++    panthera_dhcp_trace("PANTHERA:DHCP delayed start fired\n");
++#endif
+     if (ServiceIsNetBoot(service_p)) {
+ 	struct in_addr	our_ip = { 0 };
+ 
++#ifdef PANTHERA
++	panthera_dhcp_trace("PANTHERA:DHCP delayed start init-reboot enter\n");
++#endif
+ 	dhcp_init_reboot(service_p, IFEventID_start_e, &our_ip);
++#ifdef PANTHERA
++	panthera_dhcp_trace("PANTHERA:DHCP delayed start init-reboot returned\n");
++#endif
+     }
+     else {
++#ifdef PANTHERA
++	panthera_dhcp_trace("PANTHERA:DHCP delayed start check-link enter\n");
++#endif
+ 	dhcp_check_link(service_p, IFEventID_start_e);
++#ifdef PANTHERA
++	panthera_dhcp_trace("PANTHERA:DHCP delayed start check-link returned\n");
++#endif
+     }
+     return;
+ }
+@@ -2182,17 +2284,40 @@
+     interface_t *	if_p = service_interface(service_p);
+     struct timeval	tv;
+ 
++#ifdef PANTHERA
++    panthera_dhcp_tracef("PANTHERA:DHCP start enter if=%s\n", if_name(if_p));
++#endif
+     my_log(LOG_NOTICE, "DHCP %s: start", if_name(if_p));
+     DHCPLeaseListInit(&dhcp->lease_list);
++#ifdef PANTHERA
++    panthera_dhcp_trace("PANTHERA:DHCP lease list initialized\n");
++#endif
++#ifdef PANTHERA
+     dhcp->xid = arc4random();
++    panthera_dhcp_tracef("PANTHERA:DHCP xid random value=0x%08x\n", dhcp->xid);
++#else
++    dhcp->xid = arc4random();
++#endif
+     if (!ServiceIsNetBoot(service_p)) {
++#ifdef PANTHERA
++	panthera_dhcp_trace("PANTHERA:DHCP recover lease enter\n");
++#endif
+ 	recover_lease(service_p);
++#ifdef PANTHERA
++	panthera_dhcp_trace("PANTHERA:DHCP recover lease returned\n");
++#endif
+     }
+     tv.tv_sec = 0;
+     tv.tv_usec = 0;
++#ifdef PANTHERA
++    panthera_dhcp_trace("PANTHERA:DHCP delayed start timer set enter\n");
++#endif
+     timer_set_relative(dhcp->timer, tv,
+ 		       (timer_func_t *)dhcp_delayed_start,
+ 		       service_p, NULL, NULL);
++#ifdef PANTHERA
++    panthera_dhcp_trace("PANTHERA:DHCP delayed start timer set returned\n");
++#endif
+ }
+ 
+ PRIVATE_EXTERN ipconfig_status_t
+@@ -2202,12 +2327,19 @@
+     interface_t *	if_p = service_interface(service_p);
+     ipconfig_status_t	status = ipconfig_status_success_e;
+ 
++#ifdef PANTHERA
++    panthera_dhcp_tracef("PANTHERA:DHCP thread enter if=%s event=%d\n",
++			 if_name(if_p), (int)event_id);
++#endif
+ 
+     switch (event_id) {
+       case IFEventID_start_e: {
+ 	  ipconfig_method_data_t	method_data;
+ 	  char				timer_name[32];
+ 
++#ifdef PANTHERA
++	  panthera_dhcp_trace("PANTHERA:DHCP start case enter\n");
++#endif
+ 	  if (if_flags(if_p) & IFF_LOOPBACK) {
+ 	      status = ipconfig_status_invalid_operation_e;
+ 	      break;
+@@ -2218,33 +2350,67 @@
+ 	      status = ipconfig_status_internal_error_e;
+ 	      break;
+ 	  }
++#ifdef PANTHERA
++	  panthera_dhcp_trace("PANTHERA:DHCP alloc enter\n");
++#endif
+ 	  dhcp = malloc(sizeof(*dhcp));
+ 	  bzero(dhcp, sizeof(*dhcp));
++#ifdef PANTHERA
++	  panthera_dhcp_trace("PANTHERA:DHCP alloc returned\n");
++#endif
+ 	  dhcp->must_broadcast = (if_link_arptype(if_p) == ARPHRD_IEEE1394);
+ 	  dhcpol_init(&dhcp->saved.options);
+ 	  ServiceSetPrivate(service_p, dhcp);
++#ifdef PANTHERA
++	  panthera_dhcp_trace("PANTHERA:DHCP service private set\n");
++#endif
+ 
+ 	  dhcp_invalidate_lease(dhcp);
+ 	  service_router_clear(service_p);
+ 	  dhcp->state = dhcp_cstate_inactive_e;
+ 	  snprintf(timer_name, sizeof(timer_name), "dhcp-%s",
+ 		   if_name(if_p));
++#ifdef PANTHERA
++	  panthera_dhcp_trace("PANTHERA:DHCP timer init enter\n");
++#endif
+ 	  dhcp->timer = timer_callout_init(timer_name);
++#ifdef PANTHERA
++	  panthera_dhcp_tracef("PANTHERA:DHCP timer init returned ptr=%p\n",
++			       dhcp->timer);
++#endif
+ 	  if (dhcp->timer == NULL) {
+ 	      my_log(LOG_NOTICE, "DHCP %s: timer_callout_init failed",
+ 		     if_name(if_p));
+ 	      status = ipconfig_status_allocation_failed_e;
+ 	      goto stop;
+ 	  }
++#ifdef PANTHERA
++	  panthera_dhcp_trace("PANTHERA:DHCP autoaddr enable enter\n");
++#endif
+ 	  service_enable_autoaddr(service_p);
++#ifdef PANTHERA
++	  panthera_dhcp_trace("PANTHERA:DHCP autoaddr enable returned\n");
++	  panthera_dhcp_trace("PANTHERA:DHCP bootp client init enter\n");
++#endif
+ 	  dhcp->client = bootp_client_init(if_p);
++#ifdef PANTHERA
++	  panthera_dhcp_tracef("PANTHERA:DHCP bootp client init returned ptr=%p\n",
++			       dhcp->client);
++#endif
+ 	  if (dhcp->client == NULL) {
+ 	      my_log(LOG_NOTICE, "DHCP %s: bootp_client_init failed",
+ 		     if_name(if_p));
+ 	      status = ipconfig_status_allocation_failed_e;
+ 	      goto stop;
+ 	  }
++#ifdef PANTHERA
++	  panthera_dhcp_trace("PANTHERA:DHCP arp client init enter\n");
++#endif
+ 	  dhcp->arp = arp_client_init(if_p);
++#ifdef PANTHERA
++	  panthera_dhcp_tracef("PANTHERA:DHCP arp client init returned ptr=%p\n",
++			       dhcp->arp);
++#endif
+ 	  if (dhcp->arp == NULL) {
+ 	      my_log(LOG_NOTICE, "DHCP %s: arp_client_init failed",
+ 		     if_name(if_p));
+@@ -2261,10 +2427,16 @@
+ 		  status = ipconfig_status_allocation_failed_e;
+ 		  goto stop;
+ 	      }
+-	      bcopy(method_data->dhcp.client_id, 
+-		    dhcp->client_id, dhcp->client_id_len);
+-	  }
++		      bcopy(method_data->dhcp.client_id, 
++			    dhcp->client_id, dhcp->client_id_len);
++		  }
++#ifdef PANTHERA
++	  panthera_dhcp_trace("PANTHERA:DHCP start body enter\n");
++#endif
+ 	  dhcp_start(service_p);
++#ifdef PANTHERA
++	  panthera_dhcp_trace("PANTHERA:DHCP start body returned\n");
++#endif
+ 	  break;
+       }
+       case IFEventID_stop_e: {
+@@ -2643,6 +2815,10 @@
+ 	  dhcpoa_t		options;
+ 	  dhcp_cstate_t		prev_state = dhcp->state;
+ 
++#ifdef PANTHERA
++	  panthera_dhcp_tracef("PANTHERA:DHCP init start enter if=%s\n",
++			       if_name(if_p));
++#endif
+ 	  dhcp_set_state(service_p, dhcp_cstate_init_e);
+ 	  dhcp->allow_wake_with_short_lease = TRUE;
+ 	  dhcp->resolve_router_timed_out = FALSE;
+@@ -2670,6 +2846,10 @@
+ 					    dhcp->client_id_len,
+ 					    flags,
+ 					    &options);
++#ifdef PANTHERA
++	  panthera_dhcp_tracef("PANTHERA:DHCP init request made ptr=%p\n",
++			       dhcp->request);
++#endif
+ 	  if (dhcp->request == NULL) {
+ 	      my_log(LOG_NOTICE, "DHCP %s: INIT make_dhcp_request failed",
+ 		     if_name(if_p));
+@@ -2709,9 +2889,15 @@
+ 	  dhcp->saved.rating = 0;
+ 	  dhcp->got_nak = FALSE;
+ 	  service_enable_autoaddr(service_p);
++#ifdef PANTHERA
++	  panthera_dhcp_trace("PANTHERA:DHCP init enable receive enter\n");
++#endif
+ 	  bootp_client_enable_receive(dhcp->client,
+ 				      (bootp_receive_func_t *)dhcp_init, 
+ 				      service_p, (void *)IFEventID_data_e);
++#ifdef PANTHERA
++	  panthera_dhcp_trace("PANTHERA:DHCP init enable receive returned\n");
++#endif
+ 	  ServiceSetBusy(service_p, TRUE);
+ 	  /* FALL THROUGH */
+       }
+@@ -2763,13 +2949,26 @@
+ 	      = htons((uint16_t)(current_time - dhcp->start_secs));
+ 
+ 	  /* send the packet */
++#ifdef PANTHERA
++	  panthera_dhcp_tracef("PANTHERA:DHCP init transmit enter xid=0x%lx size=%d\n",
++			       (unsigned long)dhcp->xid, dhcp->request_size);
++#endif
+ 	  if (bootp_client_transmit(dhcp->client,
+ 				    G_ip_broadcast, G_ip_zeroes,
+ 				    G_server_port, G_client_port,
+ 				    dhcp->request, dhcp->request_size) < 0) {
+ 	      my_log(LOG_NOTICE,
+ 		     "DHCP %s: INIT transmit failed", if_name(if_p));
++#ifdef PANTHERA
++	      panthera_dhcp_tracef("PANTHERA:DHCP init transmit returned error errno=%d\n",
++				   errno);
++#endif
+ 	  }
++#ifdef PANTHERA
++	  else {
++	      panthera_dhcp_trace("PANTHERA:DHCP init transmit returned ok\n");
++	  }
++#endif
+ 	  /* wait for responses */
+ 	  tv.tv_sec = dhcp->wait_secs;
+ 	  tv.tv_usec = (suseconds_t)random_range(0, USECS_PER_SEC - 1);
+@@ -2791,18 +2990,38 @@
+ 	  dhcp_lease_time_t 	lease;
+ 	  bootp_receive_data_t *pkt = (bootp_receive_data_t *)event_data;
+ 	  dhcp_msgtype_t	reply_msgtype = dhcp_msgtype_none_e;
+-	  struct in_addr	server_ip;
++	  struct in_addr	server_ip = { 0 };
+ 	  dhcp_lease_time_t	t1;
+ 	  dhcp_lease_time_t	t2;
++	  boolean_t		packet_ok;
+ 
++#ifdef PANTHERA
++	  panthera_dhcp_tracef("PANTHERA:DHCP init data enter if=%s size=%u yiaddr=" IP_FORMAT "\n",
++			       if_name(if_p), (unsigned int)pkt->size,
++			       IP_LIST(&pkt->data->dp_yiaddr));
++#endif
+ 
+-	  if (verify_packet(pkt, dhcp->xid, if_p, &reply_msgtype,
+-			    &server_ip) == FALSE
++	  packet_ok = verify_packet(pkt, dhcp->xid, if_p, &reply_msgtype,
++				    &server_ip);
++#ifdef PANTHERA
++	  panthera_dhcp_tracef("PANTHERA:DHCP init data verify ok=%d type=%d server=" IP_FORMAT "\n",
++			       packet_ok, reply_msgtype, IP_LIST(&server_ip));
++#endif
++	  if (packet_ok == FALSE
+ 	      || server_ip.s_addr == 0
+ 	      || reply_msgtype != dhcp_msgtype_offer_e) {
+ 	      /* reject the packet */
++#ifdef PANTHERA
++	      panthera_dhcp_tracef("PANTHERA:DHCP init data rejected ok=%d server_zero=%d type=%d\n",
++				   packet_ok, server_ip.s_addr == 0,
++				   reply_msgtype);
++#endif
+ 	      break;
+ 	  }
++#ifdef PANTHERA
++	  panthera_dhcp_tracef("PANTHERA:DHCP init offer accepted server=" IP_FORMAT " yiaddr=" IP_FORMAT "\n",
++			       IP_LIST(&server_ip), IP_LIST(&pkt->data->dp_yiaddr));
++#endif
+ 
+ 	  /* check whether DHCP server says we can do IPv6-only */
+ 	  if (dhcp_ipv6_only_preferred
+@@ -2826,6 +3045,11 @@
+ 	       */
+ 	      rating += 
+ 		 get_rating_for_ip_address(&pkt->data->dp_yiaddr); 
++#ifdef PANTHERA
++	      panthera_dhcp_tracef("PANTHERA:DHCP init offer rating=%d ideal=%d saved=%d\n",
++				   rating, dhcp_packet_ideal_rating,
++				   dhcp->saved.rating);
++#endif
+ 
+ 	      /* 
+ 	       * The new packet is "better" than the saved packet if there
+@@ -2848,6 +3072,9 @@
+ 					current_time, lease, t1, t2);
+ 		  if (rating == dhcp_packet_ideal_rating
+ 		      || interface_is_isolated(if_p)) {
++#ifdef PANTHERA
++		      panthera_dhcp_trace("PANTHERA:DHCP init selecting offer immediately\n");
++#endif
+ 		      dhcp_select(service_p, IFEventID_start_e, NULL);
+ 		      break; /* out of switch */
+ 		  }
+@@ -3185,10 +3412,21 @@
+       case IFEventID_start_e: {
+ 	  dhcpoa_t	 	options;
+ 
++#ifdef PANTHERA
++	  panthera_dhcp_tracef("PANTHERA:DHCP select start enter if=%s server=" IP_FORMAT " requested=" IP_FORMAT "\n",
++			       if_name(if_p), IP_LIST(&dhcp->saved.server_ip),
++			       IP_LIST(&dhcp->saved.our_ip));
++#endif
+ 	  dhcp_set_state(service_p, dhcp_cstate_select_e);
+ 
+ 	  /* clean-up anything that might have come before */
++#ifdef PANTHERA
++	  panthera_dhcp_trace("PANTHERA:DHCP select preserving BOOTP receive across state change\n");
++	  timer_cancel(dhcp->timer);
++	  arp_client_cancel(dhcp->arp);
++#else
+ 	  dhcp_cancel_pending_events(service_p);
++#endif
+ 
+ 	  /* form the request */
+ 	  /* ALIGN: txbuf is uint32_t aligned, cast ok */
+@@ -3250,6 +3488,9 @@
+ 	  bootp_client_enable_receive(dhcp->client,
+ 				      (bootp_receive_func_t *)dhcp_select, 
+ 				      service_p, (void *)IFEventID_data_e);
++#ifdef PANTHERA
++	  panthera_dhcp_trace("PANTHERA:DHCP select enable receive returned\n");
++#endif
+       }
+       case IFEventID_timeout_e: {
+ 	  dhcp->try++;
+@@ -3264,6 +3505,10 @@
+ 	      = htons((uint16_t)(current_time - dhcp->start_secs));
+ 
+ 	  /* send the packet */
++#ifdef PANTHERA
++	  panthera_dhcp_tracef("PANTHERA:DHCP select transmit enter xid=0x%lx size=%d\n",
++			       (unsigned long)dhcp->xid, dhcp->request_size);
++#endif
+ 	  if (bootp_client_transmit(dhcp->client,
+ 				    G_ip_broadcast, G_ip_zeroes,
+ 				    G_server_port, G_client_port,
+@@ -3271,7 +3516,16 @@
+ 	      my_log(LOG_NOTICE,
+ 		     "DHCP %s: SELECT transmit failed", 
+ 		     if_name(if_p));
++#ifdef PANTHERA
++	      panthera_dhcp_tracef("PANTHERA:DHCP select transmit returned error errno=%d\n",
++				   errno);
++#endif
+ 	  }
++#ifdef PANTHERA
++	  else {
++	      panthera_dhcp_trace("PANTHERA:DHCP select transmit returned ok\n");
++	  }
++#endif
+ 	  /* wait for responses */
+ 	  tv.tv_sec = dhcp->wait_secs;
+ 	  tv.tv_usec = 0;
+@@ -3295,10 +3549,24 @@
+ 	  struct in_addr	server_ip = { 0 };
+ 	  dhcp_lease_time_t 	t1;
+ 	  dhcp_lease_time_t 	t2;
++	  boolean_t		packet_ok;
+ 
+-	  if (verify_packet(pkt, dhcp->xid, if_p, &reply_msgtype,
+-			    &server_ip) == FALSE) {
++#ifdef PANTHERA
++	  panthera_dhcp_tracef("PANTHERA:DHCP select data enter if=%s size=%u yiaddr=" IP_FORMAT "\n",
++			       if_name(if_p), (unsigned int)pkt->size,
++			       IP_LIST(&pkt->data->dp_yiaddr));
++#endif
++	  packet_ok = verify_packet(pkt, dhcp->xid, if_p, &reply_msgtype,
++				    &server_ip);
++#ifdef PANTHERA
++	  panthera_dhcp_tracef("PANTHERA:DHCP select data verify ok=%d type=%d server=" IP_FORMAT "\n",
++			       packet_ok, reply_msgtype, IP_LIST(&server_ip));
++#endif
++	  if (packet_ok == FALSE) {
+ 	      /* reject the packet */
++#ifdef PANTHERA
++	      panthera_dhcp_trace("PANTHERA:DHCP select data rejected verify\n");
++#endif
+ 	      break; /* out of switch */
+ 	  }
+ 
+@@ -3306,6 +3574,11 @@
+ 	      if (server_ip.s_addr == 0 
+ 		  || server_ip.s_addr != dhcp->saved.server_ip.s_addr) {
+ 		  /* reject the packet */
++#ifdef PANTHERA
++		  panthera_dhcp_tracef("PANTHERA:DHCP select nak rejected server=" IP_FORMAT " saved=" IP_FORMAT "\n",
++				       IP_LIST(&server_ip),
++				       IP_LIST(&dhcp->saved.server_ip));
++#endif
+ 		  break; /* out of switch */
+ 	      }
+ 	      /* clean-up anything that might have come before */
+@@ -3325,8 +3598,17 @@
+ 	  if (reply_msgtype != dhcp_msgtype_ack_e
+ 	      || ip_valid(pkt->data->dp_yiaddr) == FALSE) {
+ 	      /* reject the packet */
++#ifdef PANTHERA
++	      panthera_dhcp_tracef("PANTHERA:DHCP select data rejected type=%d valid_yiaddr=%d\n",
++				   reply_msgtype,
++				   ip_valid(pkt->data->dp_yiaddr));
++#endif
+ 	      break; /* out of switch */
+ 	  }
++#ifdef PANTHERA
++	  panthera_dhcp_tracef("PANTHERA:DHCP select ack accepted server=" IP_FORMAT " yiaddr=" IP_FORMAT "\n",
++			       IP_LIST(&server_ip), IP_LIST(&pkt->data->dp_yiaddr));
++#endif
+ 	  dhcp_get_lease_from_options(&pkt->options, &lease, &t1, &t2);
+ 	  dhcp_set_lease_params(service_p, "SELECT",
+ 				current_time, lease, t1, t2);
+@@ -3695,6 +3977,10 @@
+     Service_dhcp_t *	dhcp = (Service_dhcp_t *)ServiceGetPrivate(service_p);
+     struct timeval	tv;
+ 
++#ifdef PANTHERA
++    panthera_dhcp_tracef("PANTHERA:DHCP router arp callback status=%d\n",
++			 status);
++#endif
+     ServiceSetBusy(service_p, FALSE);
+     switch (status) {
+     case router_arp_status_no_response_e:
+@@ -3760,6 +4046,11 @@
+       case IFEventID_start_e: {
+ 	  dhcp_cstate_t		prev_state = dhcp->state;
+ 
++#ifdef PANTHERA
++	  panthera_dhcp_tracef("PANTHERA:DHCP bound start enter if=%s prev_state=%d ip=" IP_FORMAT "\n",
++			       if_name(if_p), prev_state,
++			       IP_LIST(&dhcp->saved.our_ip));
++#endif
+ 	  dhcp_set_state(service_p, dhcp_cstate_bound_e);
+ 	  dhcp->lease.needs_write = TRUE;
+ 	  dhcp->disable_arp_collision_detection = TRUE;
+@@ -3792,6 +4083,9 @@
+ 	  if (!interface_is_isolated(if_p)
+ 	      && prev_state == dhcp_cstate_select_e) {
+               /* do an ARP probe of the supplied address */
++#ifdef PANTHERA
++	      panthera_dhcp_trace("PANTHERA:DHCP bound arp probe enter\n");
++#endif
+               arp_client_probe(dhcp->arp,
+                                (arp_result_func_t *)dhcp_bound, service_p,
+                                (void *)IFEventID_arp_e, G_ip_zeroes,
+@@ -3817,6 +4111,10 @@
+ 	case IFEventID_arp_e: {
+ 	  arp_result_t *	result = (arp_result_t *)event_data;
+ 
++#ifdef PANTHERA
++	  panthera_dhcp_tracef("PANTHERA:DHCP bound arp result error=%d in_use=%d\n",
++			       result->error, result->in_use);
++#endif
+ 	  if (result->error) {
+ 	      my_log(LOG_NOTICE, "DHCP %s: ARP probe failed, %s",
+ 		     if_name(if_p),
+@@ -3877,6 +4175,10 @@
+     }
+ 
+     /* set our address */
++#ifdef PANTHERA
++    panthera_dhcp_tracef("PANTHERA:DHCP bound set address enter ip=" IP_FORMAT " mask=" IP_FORMAT "\n",
++			 IP_LIST(&dhcp->saved.our_ip), IP_LIST(&mask));
++#endif
+     if ((dhcp->saved.our_ip.s_addr 
+ 	 != ServiceGetActiveIPAddress(service_p).s_addr)
+ 	|| (mask.s_addr 
+@@ -3884,6 +4186,9 @@
+ 	service_set_address(service_p, dhcp->saved.our_ip,
+ 			    mask, G_ip_zeroes);
+     }
++#ifdef PANTHERA
++    panthera_dhcp_trace("PANTHERA:DHCP bound set address returned\n");
++#endif
+     my_log(LOG_NOTICE, "dhcp_bound(%s) %s",
+ 	   if_name(if_p),
+ 	   inet_ntop(AF_INET, &dhcp->saved.our_ip,
+@@ -3922,6 +4227,9 @@
+ 
+     /* get the router's MAC address */
+     dhcp->resolve_router_timed_out = FALSE;
++#ifdef PANTHERA
++    panthera_dhcp_trace("PANTHERA:DHCP bound router arp enter\n");
++#endif
+     if (do_arp
+ 	&& service_update_router_address(service_p, &dhcp->saved.options,
+ 					 dhcp->saved.our_ip)
+@@ -3929,17 +4237,46 @@
+ 				  dhcp_resolve_router_callback,
+ 				  dhcp->saved.our_ip)) {
+ 	/* resolving router's MAC address started */
++#ifdef PANTHERA
++	panthera_dhcp_trace("PANTHERA:DHCP bound router arp started\n");
++	panthera_dhcp_trace("PANTHERA:DHCP bound publish before router arp callback enter\n");
++#endif
++	dhcp_publish_success(service_p);
++#ifdef PANTHERA
++	panthera_dhcp_trace("PANTHERA:DHCP bound publish before router arp callback returned\n");
++	panthera_dhcp_trace("PANTHERA:DHCP bound busy false before router arp callback enter\n");
++#endif
++	ServiceSetBusy(service_p, FALSE);
++#ifdef PANTHERA
++	panthera_dhcp_trace("PANTHERA:DHCP bound busy false before router arp callback returned\n");
++#endif
+     }
+     else {
+ 	/* save the lease now since we won't ARP for the router */
+ 	_dhcp_lease_save(service_p, dhcp->lease.start,
+ 			 (uint8_t *)dhcp->saved.pkt, dhcp->saved.pkt_size,
+ 			 dhcp->lease.needs_write);
++#ifdef PANTHERA
++	panthera_dhcp_trace("PANTHERA:DHCP bound lease save returned\n");
++#endif
+ 	dhcp->lease.needs_write = FALSE;
++#ifdef PANTHERA
++	panthera_dhcp_trace("PANTHERA:DHCP bound publish success enter\n");
++#endif
+ 	dhcp_publish_success(service_p);
++#ifdef PANTHERA
++	panthera_dhcp_trace("PANTHERA:DHCP bound publish success returned\n");
++	panthera_dhcp_trace("PANTHERA:DHCP bound busy false enter\n");
++#endif
+ 	ServiceSetBusy(service_p, FALSE);
++#ifdef PANTHERA
++	panthera_dhcp_trace("PANTHERA:DHCP bound busy false returned\n");
++#endif
+     }
+ 
++#ifdef PANTHERA
++    panthera_dhcp_trace("PANTHERA:DHCP bound returned\n");
++#endif
+     return;
+ }
+ 
+--- IPConfiguration.bproj/ifutil.c
++++ IPConfiguration.bproj/ifutil.c
+@@ -39,6 +39,12 @@
+ #include <unistd.h>
+ #include <syslog.h>
+ #include <string.h>
++#ifdef PANTHERA
++#include <fcntl.h>
++#include <pthread.h>
++#include <stdarg.h>
++#include <stdio.h>
++#endif
+ #include <sys/socket.h>
+ #include <net/if.h>
+ #include <netinet/in.h>
+@@ -63,6 +69,41 @@
+ 
+ STATIC ifutil_close_required_callback_t	S_close_required_callback;
+ 
++#ifdef PANTHERA
++STATIC boolean_t
++panthera_ifutil_trace_enabled(void)
++{
++    static int enabled = -1;
++
++    if (enabled < 0) {
++	const char *value = getenv("PANTHERA_IPCONFIGURATION_TRACE");
++	enabled = (value != NULL && value[0] != '\0' && strcmp(value, "0") != 0);
++    }
++    return (enabled != 0);
++}
++
++STATIC void
++panthera_ifutil_trace(const char *msg)
++{
++    if (!panthera_ifutil_trace_enabled()) {
++	return;
++    }
++    (void)write(STDERR_FILENO, msg, strlen(msg));
++}
++
++STATIC void
++panthera_ifutil_tracef(const char *fmt, ...)
++{
++    char buf[256];
++    va_list ap;
++
++    va_start(ap, fmt);
++    (void)vsnprintf(buf, sizeof(buf), fmt, ap);
++    va_end(ap);
++    panthera_ifutil_trace(buf);
++}
++#endif
++
+ PRIVATE_EXTERN void
+ ifutil_set_close_required_callback(ifutil_close_required_callback_t callback)
+ {
+@@ -78,10 +119,27 @@
+ }
+ 
+ STATIC int S_inet_socket = -1;
++STATIC int S_inet_socket_use_count;
++STATIC boolean_t S_inet_socket_close_pending;
++#ifdef PANTHERA
++STATIC pthread_mutex_t S_inet_socket_lock = PTHREAD_MUTEX_INITIALIZER;
++STATIC pthread_mutex_t S_inet6_socket_lock = PTHREAD_MUTEX_INITIALIZER;
++#endif
+ 
++STATIC void
++inet_dgram_socket_close(void);
++
+ STATIC int
+ inet_dgram_socket_open(void)
+ {
++    boolean_t opened = FALSE;
++    int ret;
++
++#ifdef PANTHERA
++    panthera_ifutil_tracef("PANTHERA:ifutil inet dgram open enter cached=%d\n",
++			   S_inet_socket);
++    pthread_mutex_lock(&S_inet_socket_lock);
++#endif
+     if (S_inet_socket < 0) {
+ 	S_inet_socket = socket(AF_INET, SOCK_DGRAM, 0);
+ 	if (S_inet_socket < 0) {
+@@ -93,21 +151,74 @@
+ 	    my_log(LOG_DEBUG,
+ 		   "inet socket opened %d",
+ 		   S_inet_socket);
+-	    ifutil_close_required();
++	    S_inet_socket_use_count++;
++	    opened = TRUE;
+ 	}
+     }
+-    return (S_inet_socket);
++    if (S_inet_socket >= 0 && opened == FALSE) {
++	S_inet_socket_use_count++;
++    }
++    ret = S_inet_socket;
++#ifdef PANTHERA
++    pthread_mutex_unlock(&S_inet_socket_lock);
++    panthera_ifutil_tracef("PANTHERA:ifutil inet dgram open returned fd=%d uses=%d errno=%d\n",
++			   ret, S_inet_socket_use_count, errno);
++#endif
++    if (opened) {
++	ifutil_close_required();
++    }
++    return (ret);
+ }
+ 
+ STATIC void
++inet_dgram_socket_release(void)
++{
++#ifdef PANTHERA
++    pthread_mutex_lock(&S_inet_socket_lock);
++#endif
++    if (S_inet_socket_use_count > 0) {
++	S_inet_socket_use_count--;
++    }
++#ifdef PANTHERA
++    panthera_ifutil_tracef("PANTHERA:ifutil inet dgram release uses=%d pending=%d\n",
++			   S_inet_socket_use_count, S_inet_socket_close_pending);
++#endif
++    if (S_inet_socket_use_count == 0 && S_inet_socket_close_pending) {
++	S_inet_socket_close_pending = FALSE;
++	if (S_inet_socket >= 0) {
++	    close(S_inet_socket);
++	    my_log(LOG_DEBUG, "inet socket closed %d",
++		   S_inet_socket);
++	    S_inet_socket = -1;
++	}
++    }
++#ifdef PANTHERA
++    pthread_mutex_unlock(&S_inet_socket_lock);
++#endif
++}
++
++STATIC void
+ inet_dgram_socket_close(void)
+ {
++#ifdef PANTHERA
++    pthread_mutex_lock(&S_inet_socket_lock);
++#endif
+     if (S_inet_socket >= 0) {
++	if (S_inet_socket_use_count > 0) {
++	    S_inet_socket_close_pending = TRUE;
++#ifdef PANTHERA
++	    pthread_mutex_unlock(&S_inet_socket_lock);
++#endif
++	    return;
++	}
+ 	close(S_inet_socket);
+ 	my_log(LOG_DEBUG, "inet socket closed %d",
+ 	       S_inet_socket);
+ 	S_inet_socket = -1;
+     }
++#ifdef PANTHERA
++    pthread_mutex_unlock(&S_inet_socket_lock);
++#endif
+ }
+ 
+ STATIC int S_inet6_socket = -1;
+@@ -115,6 +226,11 @@
+ STATIC int
+ inet6_dgram_socket_open(void)
+ {
++    boolean_t opened = FALSE;
++    int ret;
++#ifdef PANTHERA
++    pthread_mutex_lock(&S_inet6_socket_lock);
++#endif
+     if (S_inet6_socket < 0) {
+ 	S_inet6_socket = socket(AF_INET6, SOCK_DGRAM, 0);
+ 	if (S_inet6_socket < 0) {
+@@ -126,21 +242,34 @@
+ 	    my_log(LOG_DEBUG,
+ 		   "inet6 socket opened %d",
+ 		   S_inet6_socket);
+-	    ifutil_close_required();
++	    opened = TRUE;
+ 	}
+     }
+-    return (S_inet6_socket);
++    ret = S_inet6_socket;
++#ifdef PANTHERA
++    pthread_mutex_unlock(&S_inet6_socket_lock);
++#endif
++    if (opened) {
++	ifutil_close_required();
++    }
++    return (ret);
+ }
+ 
+ STATIC void
+ inet6_dgram_socket_close(void)
+ {
++#ifdef PANTHERA
++    pthread_mutex_lock(&S_inet6_socket_lock);
++#endif
+     if (S_inet6_socket >= 0) {
+ 	close(S_inet6_socket);
+ 	my_log(LOG_DEBUG, "inet6 socket closed %d",
+ 	       S_inet6_socket);
+ 	S_inet6_socket = -1;
+     }
++#ifdef PANTHERA
++    pthread_mutex_unlock(&S_inet6_socket_lock);
++#endif
+ }
+ 
+ PRIVATE_EXTERN void
+@@ -203,6 +332,10 @@
+     bzero(&ifr, sizeof(ifr));
+     ISSUE_IF_IOCTL(s, ret, ifr, name, SIOCGIFFLAGS);
+     if (ret < 0) {
++#ifdef PANTHERA
++	panthera_ifutil_tracef("PANTHERA:ifutil set_flags get failed if=%s errno=%d\n",
++			       name, errno);
++#endif
+ 	return (ret);
+     }
+     flags_before = ifr.ifr_flags;
+@@ -212,10 +345,29 @@
+     if (flags_before == flags_after) {
+ 	/* nothing to do */
+ 	ret = 0;
++#ifdef PANTHERA
++	panthera_ifutil_tracef("PANTHERA:ifutil set_flags unchanged if=%s flags=0x%x\n",
++			       name, flags_after);
++#endif
+     }
+     else {
+ 	/* issue the ioctl */
++#ifdef PANTHERA
++	panthera_ifutil_tracef("PANTHERA:ifutil set_flags before ioctl if=%s before=0x%x after=0x%x\n",
++			       name, flags_before, flags_after);
++#endif
+ 	ISSUE_IF_IOCTL(s, ret, ifr, name, SIOCSIFFLAGS);
++#ifdef PANTHERA
++	panthera_ifutil_tracef("PANTHERA:ifutil set_flags ioctl returned if=%s ret=%d errno=%d\n",
++			       name, ret, errno);
++	if (ret == 0) {
++	    struct ifreq verify_ifr;
++	    bzero(&verify_ifr, sizeof(verify_ifr));
++	    ISSUE_IF_IOCTL(s, ret, verify_ifr, name, SIOCGIFFLAGS);
++	    panthera_ifutil_tracef("PANTHERA:ifutil set_flags verify if=%s ret=%d flags=0x%x errno=%d\n",
++				   name, ret, verify_ifr.ifr_flags, errno);
++	}
++#endif
+ 	my_log(LOG_INFO,
+ 	       "interface_set_flags(%s, set 0x%x, clear 0x%x) 0x%x => 0x%x",
+ 	       name, flags_to_set, flags_to_clear, flags_before, flags_after);
+@@ -261,6 +413,7 @@
+     s = inet_dgram_socket_open();
+     if (s >= 0) {
+ 	(void)siocgifeflags(s, name, ret_eflags);
++	inet_dgram_socket_release();
+     }
+     return;
+ }
+@@ -272,7 +425,15 @@
+     int			ret;
+ 
+     bzero(&ifr, sizeof(ifr));
++#ifdef PANTHERA
++    panthera_ifutil_tracef("PANTHERA:ifutil siocprotoattach enter if=%s fd=%d\n",
++			   name, s);
++#endif
+     ISSUE_IF_IOCTL(s, ret, ifr, name, SIOCPROTOATTACH);
++#ifdef PANTHERA
++    panthera_ifutil_tracef("PANTHERA:ifutil siocprotoattach returned if=%s ret=%d errno=%d\n",
++			   name, ret, errno);
++#endif
+     return (ret);
+ }
+ 
+@@ -283,6 +444,7 @@
+ 
+     if (s >= 0) {
+ 	siocsifmtu(s, ifname, mtu);
++	inet_dgram_socket_release();
+     }
+ }
+ 
+@@ -306,6 +468,7 @@
+     s = inet_dgram_socket_open();
+     if (s >= 0) {
+ 	siocarpipll(s, name, enable ? 1 : 0);
++	inet_dgram_socket_release();
+     }
+ }
+ 
+@@ -353,6 +516,7 @@
+ 	if (siocsifl4s(s, name, l4s_mode) == 0) {
+ 	    success = TRUE;
+ 	}
++	inet_dgram_socket_release();
+     }
+ #endif /* IFRTYPE_L4S_DEFAULT */
+     return (success);
+@@ -371,6 +535,7 @@
+     s = inet_dgram_socket_open();
+     if (s >= 0) {
+ 	success = siocgifl4s(s, name, l4s_mode) == 0;
++	inet_dgram_socket_release();
+     }
+ #endif /* IFRTYPE_L4S_DEFAULT */
+     return (success);
+@@ -392,6 +557,7 @@
+ 	ret = interface_set_flags(s, ifname,
+ 				  up ? IFF_UP : 0,
+ 				  !up ? IFF_UP : 0);
++	inet_dgram_socket_release();
+     }
+     return (ret);
+ }
+@@ -412,6 +578,7 @@
+ 	ret = interface_set_flags(s, ifname,
+ 				  noarp ? IFF_NOARP : 0,
+ 				  !noarp ? IFF_NOARP : 0);
++	inet_dgram_socket_release();
+     }
+     return (ret);
+ }
+@@ -421,6 +588,10 @@
+ inet_attach_interface(const char * ifname, boolean_t set_iff_up)
+ {
+     int ret = 0;
++#ifdef PANTHERA
++    panthera_ifutil_tracef("PANTHERA:ifutil inet_attach enter if=%s up=%d\n",
++			   ifname, set_iff_up);
++#endif
+     int s = inet_dgram_socket_open();
+ 
+     if (s < 0) {
+@@ -433,11 +604,26 @@
+ 	my_log(LOG_INFO,
+ 	       "inet_attach_interface(%s)", ifname);
+ 	if (set_iff_up) {
++#ifdef PANTHERA
++	    panthera_ifutil_tracef("PANTHERA:ifutil inet_attach set_flags enter if=%s\n",
++				   ifname);
++#endif
+ 	    (void)interface_set_flags(s, ifname, IFF_UP, 0);
++#ifdef PANTHERA
++	    panthera_ifutil_tracef("PANTHERA:ifutil inet_attach set_flags returned if=%s errno=%d\n",
++				   ifname, errno);
++#endif
+ 	}
+     }
+ 
+  done:
++#ifdef PANTHERA
++    panthera_ifutil_tracef("PANTHERA:ifutil inet_attach done if=%s ret=%d errno=%d\n",
++			   ifname, ret, errno);
++#endif
++    if (s >= 0) {
++	inet_dgram_socket_release();
++    }
+     return (ret);
+ }
+ 
+@@ -459,6 +645,7 @@
+ 
+     if (s >= 0) {
+ 	siocprotodetach(s, ifname);
++	inet_dgram_socket_release();
+     }
+ }
+ 
+@@ -474,14 +661,17 @@
+     return (ret);
+ }
+ 
+-PRIVATE_EXTERN void
++PRIVATE_EXTERN int
+ inet_set_autoaddr(const char * ifname, int val)
+ {
+     int 		s = inet_dgram_socket_open();
++    int			ret = -1;
+ 
+     if (s >= 0) {
+-	(void)siocautoaddr(s, ifname, val);
++	ret = siocautoaddr(s, ifname, val);
++	inet_dgram_socket_release();
+     }
++    return (ret);
+ }
+ 
+ STATIC void
+@@ -508,6 +698,7 @@
+     set_sockaddr_in((struct sockaddr_in *)(void *)&ifr.ifr_addr, addr);
+ 
+     ISSUE_IF_IOCTL(s, ret, ifr, name, SIOCDIFADDR);
++    inet_dgram_socket_release();
+     return (ret);
+ }
+ 
+@@ -533,8 +724,22 @@
+     if (broadaddr != NULL) {
+ 	set_sockaddr_in(&ifra.ifra_broadaddr, *broadaddr);
+     }
++#ifdef PANTHERA
++    panthera_ifutil_tracef("PANTHERA:ifutil aifaddr ioctl enter if=%s addr=0x%x mask=0x%x broad=0x%x fd=%d\n",
++			   name, ntohl(addr.s_addr),
++			   mask != NULL ? ntohl(mask->s_addr) : 0,
++			   broadaddr != NULL ? ntohl(broadaddr->s_addr) : 0,
++			   s);
++#endif
+     ISSUE_IFRA_IOCTL(s, ret, ifra, name, SIOCAIFADDR);
++#ifdef PANTHERA
++    panthera_ifutil_tracef("PANTHERA:ifutil aifaddr ioctl returned if=%s ret=%d errno=%d\n",
++			   name, ret, errno);
++#endif
+  done:
++    if (s >= 0) {
++	inet_dgram_socket_release();
++    }
+     return (ret);
+ }
+ 
+@@ -583,6 +788,9 @@
+     }
+ 
+  failed:
++    if (s >= 0) {
++	inet_dgram_socket_release();
++    }
+     if (protolist_count == 0 && protolist != NULL) {
+ 	free(protolist);
+ 	protolist = NULL;
+--- IPConfiguration.bproj/ifutil.h
++++ IPConfiguration.bproj/ifutil.h
+@@ -106,7 +106,7 @@
+ int
+ inet_difaddr(const char * name, struct in_addr addr);
+ 
+-void
++int
+ inet_set_autoaddr(const char * ifname, int val);
+ 
+ typedef struct {
+--- IPConfiguration.bproj/ipconfigd.c
++++ IPConfiguration.bproj/ipconfigd.c
+@@ -149,6 +149,9 @@
+ #include <unistd.h>
+ #include <string.h>
+ #include <stdio.h>
++#ifdef PANTHERA
++#include <stdarg.h>
++#endif
+ #include <sys/types.h>
+ #include <sys/param.h>
+ #include <sys/sysctl.h>
+@@ -616,6 +619,12 @@
+ static boolean_t		S_sockets_need_close;
+ static boolean_t		S_linklocal_needs_attention;
+ static boolean_t		S_ipv4_publish_needs_attention;
++static boolean_t		S_async_work_running;
++static boolean_t		S_async_work_reschedule;
++#ifdef PANTHERA
++static boolean_t		S_async_work_queued;
++#endif
++static dispatch_source_t	S_async_work_source;
+ static IFStateList_t		S_ifstate_list;
+ static io_connect_t 		S_power_connection;
+ static IONotificationPortRef 	S_power_port;
+@@ -675,6 +684,18 @@
+ STATIC void
+ schedule_async_work(void);
+ 
++STATIC void
++perform_async_work(void);
++
++#ifdef PANTHERA
++STATIC void
++perform_async_work_context(void * context);
++STATIC void
++panthera_ipconfiguration_trace(const char *msg);
++STATIC void
++panthera_ipconfiguration_tracef(const char *fmt, ...);
++#endif
++
+ static void
+ S_add_dhcp_parameters(SCPreferencesRef prefs);
+ 
+@@ -1660,6 +1681,11 @@
+ /**
+  ** Service, IFState routines
+  **/
++struct ServiceMonitorContext {
++    dispatch_source_t	source;
++    CFStringRef		serviceID;
++};
++
+ static void
+ ServiceFree(void * arg)
+ {
+@@ -1682,10 +1708,14 @@
+     my_CFRelease(&service_p->parent_serviceID);
+     my_CFRelease(&service_p->child_serviceID);
+     if (service_p->pid_source != NULL) {
+-	CFStringRef	serviceID;
++	struct ServiceMonitorContext * context;
+ 
+-	serviceID = (CFStringRef)dispatch_get_context(service_p->pid_source);
+-	CFRelease(serviceID);
++	context = (struct ServiceMonitorContext *)
++	    dispatch_get_context(service_p->pid_source);
++	if (context != NULL) {
++	    CFRelease(context->serviceID);
++	    free(context);
++	}
+ 	dispatch_source_cancel(service_p->pid_source);
+ 	dispatch_release(service_p->pid_source);
+ 	service_p->pid_source = NULL;
+@@ -1765,20 +1795,20 @@
+ }
+ 
+ static void
+-ServiceHandleProcessExit(dispatch_source_t source)
++ServiceHandleProcessExitContext(void * context)
+ {
+-    pid_t		pid;
+-    CFStringRef		serviceID;
+-    ipconfig_status_t	status;
++    struct ServiceMonitorContext * monitor_context;
++    pid_t			 pid;
++    ipconfig_status_t		 status;
+ 
+-    pid = (pid_t)dispatch_source_get_handle(source);
++    monitor_context = (struct ServiceMonitorContext *)context;
++    pid = (pid_t)dispatch_source_get_handle(monitor_context->source);
+     my_log(LOG_INFO, "IPConfiguration: pid %d exited", pid);
+-    serviceID = (CFStringRef)dispatch_get_context(source);
+-    status = S_remove_service_with_id_str(NULL, serviceID);
++    status = S_remove_service_with_id_str(NULL, monitor_context->serviceID);
+     if (status != ipconfig_status_success_e) {
+ 	my_log(LOG_NOTICE,
+ 	       "IPConfiguration: failed to stop service %@, %s",
+-	       serviceID, ipconfig_status_string(status));
++	       monitor_context->serviceID, ipconfig_status_string(status));
+     }
+     return;
+ }
+@@ -1787,6 +1817,7 @@
+ ServiceMonitorPID(ServiceRef service_p, pid_t pid)
+ {
+     dispatch_source_t		source;
++    struct ServiceMonitorContext * context;
+ 
+     source = dispatch_source_create(DISPATCH_SOURCE_TYPE_PROC, pid,
+ 				    DISPATCH_PROC_EXIT,
+@@ -1795,10 +1826,16 @@
+ 	my_log(LOG_NOTICE, "IPConfiguration: dispatch_source_create failed");
+ 	return;
+     }
+-    CFRetain(service_p->serviceID);
+-    dispatch_set_context(source, (void *)service_p->serviceID);
+-    dispatch_source_set_event_handler(source,
+-				      ^{ ServiceHandleProcessExit(source); });
++    context = malloc(sizeof(*context));
++    if (context == NULL) {
++	dispatch_release(source);
++	return;
++    }
++    context->source = source;
++    context->serviceID = CFRetain(service_p->serviceID);
++    dispatch_set_context(source, context);
++    dispatch_source_set_event_handler_f(source,
++					ServiceHandleProcessExitContext);
+     dispatch_resume(source);
+     service_p->pid_source = source;
+     return;
+@@ -2182,6 +2219,10 @@
+     ServiceRef		service_p = NULL;
+     ipconfig_status_t	status = ipconfig_status_success_e;
+ 
++#ifdef PANTHERA
++    panthera_ipconfiguration_tracef("PANTHERA:IPConfiguration service add if=%s method=%s\n",
++				   if_name(if_p), ipconfig_method_string(method));
++#endif
+     if (ipconfig_method_is_v4(method)) {
+ 	if (parent_service_p == NULL
+ 	    && IFStateGetDisableUntilNeededRequested(ifstate)) {
+@@ -2189,12 +2230,18 @@
+ 		ifstate->disable_until_needed.interface_disabled = TRUE;
+ 		interface_up_down(if_name(if_p), FALSE);
+ 	    }
+-	}
+-	else {
+-	    /* attach IP */
+-	    inet_attach_interface(if_name(if_p), TRUE);
+-	}
+-    }
++		}
++		else {
++		    /* attach IP */
++#ifdef PANTHERA
++		    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration service add ipv4 attach enter\n");
++		    inet_attach_interface(if_name(if_p), TRUE);
++		    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration service add ipv4 attach returned\n");
++#else
++		    inet_attach_interface(if_name(if_p), TRUE);
++#endif
++		}
++	    }
+     else {
+ 	if (info->disable_cga) {
+ 	    /* service doesn't want CGA */
+@@ -2232,6 +2279,10 @@
+ 	my_log(LOG_INFO, "status from %s was %s",
+ 	       ipconfig_method_string(method),
+ 	       ipconfig_status_string(status));
++#ifdef PANTHERA
++	panthera_ipconfiguration_tracef("PANTHERA:IPConfiguration service add failed status=%s\n",
++				       ipconfig_status_string(status));
++#endif
+ 	if (ipconfig_method_is_v4(method)) {
+ 	    IFState_detach_IPv4(ifstate);
+ 	}
+@@ -2242,6 +2293,9 @@
+     }
+     else if (ipconfig_method_is_v4(method)) {
+ 	dynarray_add(&ifstate->services, service_p);
++#ifdef PANTHERA
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration service add ipv4 stored\n");
++#endif
+     }
+     else {
+ 	dynarray_add(&ifstate->services_v6, service_p);
+@@ -2462,6 +2516,10 @@
+ {
+     CFDictionaryRef	dict;
+ 
++#ifdef PANTHERA
++    panthera_ipconfiguration_tracef("PANTHERA:IPConfiguration ifstate report enter if=%s set=%d\n",
++				   if_name(ifstate->if_p), set);
++#endif
+     if (set) {
+ 	dict = CFDictionaryCreate(NULL, NULL, NULL, 0,
+ 				  &kCFTypeDictionaryKeyCallBacks,
+@@ -2471,8 +2529,21 @@
+ 	dict = NULL;
+     }
+     my_SCDynamicStoreSetInterface(S_scd_session, ifstate->ifname, entity, dict);
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration ifstate report store returned\n");
++#endif
+     my_CFRelease(&dict);
+-    schedule_async_work();
++    if (S_async_work_running) {
++#ifdef PANTHERA
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration ifstate report current async publish covers update\n");
++#endif
++    }
++    else {
++	schedule_async_work();
++    }
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration ifstate report returned\n");
++#endif
+     return;
+ }
+ 
+@@ -3320,32 +3391,56 @@
+     boolean_t		logged = FALSE;
+     ServiceIPv4Ref	v4_p = &service_p->u.v4;
+ 
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration scrub old IPv4 enter\n");
++#endif
+     if (IFStateFlagsAreSet(ifstate, kIFStateFlagsIPv4AddressesScrubbed)) {
++#ifdef PANTHERA
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration scrub old IPv4 already done\n");
++#endif
+ 	return;
+     }
+     IFStateFlagsSet(ifstate, kIFStateFlagsIPv4AddressesScrubbed);
+ 
+     /* this function only handles a single routable service */
+     count = dynarray_count(&ifstate->services);
++#ifdef PANTHERA
++    panthera_ipconfiguration_tracef("PANTHERA:IPConfiguration scrub old IPv4 service count=%d\n",
++				   count);
++#endif
+     if (ifstate->linklocal_service_p != NULL) {
+ 	ll_v4_p = &ifstate->linklocal_service_p->u.v4;
+ 	/* only handle a routable service + IPv4LL */
+ 	if (count > 2) {
++#ifdef PANTHERA
++	    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration scrub old IPv4 too many services\n");
++#endif
+ 	    return;
+ 	}
+     }
+     else {
+ 	/* only handle a single routable service */
+ 	if (count > 1) {
++#ifdef PANTHERA
++	    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration scrub old IPv4 multiple services\n");
++#endif
+ 	    return;
+ 	}
+     }
+ 
+     /* scrub any address that isn't our routable or IPv4LL address */
+     count = if_inet_count(if_p);
++#ifdef PANTHERA
++    panthera_ipconfiguration_tracef("PANTHERA:IPConfiguration scrub old IPv4 inet count=%d\n",
++				   count);
++#endif
+     for (i = 0; i < count; i++) {
+ 	inet_addrinfo_t *	info_p = if_inet_addr_at(if_p, i);
+ 
++#ifdef PANTHERA
++	panthera_ipconfiguration_tracef("PANTHERA:IPConfiguration scrub old IPv4 index=%d\n",
++				       i);
++#endif
+ 	if (info_p->addr.s_addr == v4_p->info.addr.s_addr) {
+ 	    /* it's our routable IP address, leave it alone */
+ 	}
+@@ -3362,11 +3457,17 @@
+ 	    S_remove_ip_address(if_name(if_p), info_p->addr);
+ 	}
+     }
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration scrub old IPv4 returned\n");
++#endif
+ }
+ 
+ PRIVATE_EXTERN void
+ ServiceSetBusy(ServiceRef service_p, boolean_t busy)
+ {
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration service busy enter\n");
++#endif
+     if (service_p->busy != busy) {
+ 	service_p->busy = busy;
+ 	my_log(LOG_INFO, "%s %s: %s",
+@@ -3375,6 +3476,9 @@
+ 	       get_busy_string(busy));
+ 	IFStateProcessBusy(service_ifstate(service_p));
+     }
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration service busy returned\n");
++#endif
+ }
+ 
+ PRIVATE_EXTERN void
+@@ -3680,7 +3784,13 @@
+ 				serviceID,
+ 				entities, values, entity_count,
+ 				service_p->no_publish);
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration publish async enter\n");
+     schedule_async_work();
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration publish async returned\n");
++#else
++    schedule_async_work();
++#endif
+     entities_summary = create_entities_summary(entities, values, entity_count);
+     my_CFRelease(&ipv4_dict);
+     my_CFRelease(&dns_dict);
+@@ -3689,9 +3799,24 @@
+ #if TARGET_OS_OSX
+     my_CFRelease(&smb_dict);
+ #endif /* TARGET_OS_OSX */
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration publish all services ready enter\n");
++#endif
+     all_services_ready();
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration publish all services ready returned\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration publish active sleep attention enter\n");
++#endif
+     ServiceSetActiveDuringSleepNeedsAttention(service_p);
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration publish active sleep attention returned\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration publish disable attention enter\n");
++#endif
+     setDisableUntilNeededNeedsAttention();
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration publish disable attention returned\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration publish success state enter\n");
++#endif
+     service_p->address_acquisition_failure = FALSE;
+     if (service_is_routable(service_p)
+ 	&& IFStateFlagsAreSet(ifstate, kIFStateFlagsFailureSymptomReported)) {
+@@ -3703,14 +3828,26 @@
+ 	       if_name(ifstate->if_p));
+     }
+     my_log(LOG_NOTICE,
+-	   "%s %s: publish success { %@ }",
+-	   ipconfig_method_string(service_p->method),
+-	   if_name(ifstate->if_p),
+-	   entities_summary);
++	       "%s %s: publish success { %@ }",
++	       ipconfig_method_string(service_p->method),
++	       if_name(ifstate->if_p),
++	       entities_summary);
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration publish success log returned\n");
++#endif
+     my_CFRelease(&entities_summary);
+     if (service_p->parent_serviceID == NULL) {
++#ifdef PANTHERA
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration publish scrub enter\n");
++#endif
+ 	service_scrub_old_ipv4_addresses(service_p);
++#ifdef PANTHERA
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration publish scrub returned\n");
++#endif
+     }
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration publish success returned\n");
++#endif
+     return;
+ }
+ 
+@@ -4361,15 +4498,37 @@
+ PRIVATE_EXTERN void
+ service_enable_autoaddr(ServiceRef service_p)
+ {
+-    inet_set_autoaddr(if_name(service_interface(service_p)), 1);
++#ifdef PANTHERA
++    int ret;
++
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration service autoaddr enable ioctl enter\n");
++    ret = inet_set_autoaddr(if_name(service_interface(service_p)), 1);
++    panthera_ipconfiguration_tracef("PANTHERA:IPConfiguration service autoaddr enable ioctl returned ret=%d errno=%d\n",
++				   ret, errno);
++#else
++    (void)inet_set_autoaddr(if_name(service_interface(service_p)), 1);
++#endif
+ }
+ 
+ PRIVATE_EXTERN void
+ service_disable_autoaddr(ServiceRef service_p)
+ {
++#ifdef PANTHERA
++    int ret;
++
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration service autoaddr disable flush routes enter\n");
+     flush_routes(if_link_index(service_interface(service_p)),
+ 		 G_ip_zeroes, G_ip_zeroes);
+-    inet_set_autoaddr(if_name(service_interface(service_p)), 0);
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration service autoaddr disable flush routes returned\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration service autoaddr disable ioctl enter\n");
++    ret = inet_set_autoaddr(if_name(service_interface(service_p)), 0);
++    panthera_ipconfiguration_tracef("PANTHERA:IPConfiguration service autoaddr disable ioctl returned ret=%d errno=%d\n",
++				   ret, errno);
++#else
++    flush_routes(if_link_index(service_interface(service_p)),
++		 G_ip_zeroes, G_ip_zeroes);
++    (void)inet_set_autoaddr(if_name(service_interface(service_p)), 0);
++#endif
+ }
+ 
+ STATIC Rank
+@@ -4678,6 +4837,12 @@
+ 			/* service has no IP address, allocate a linklocal IP */
+ 			allocate = LINKLOCAL_ALLOCATE;
+ 		    }
++#ifdef PANTHERA
++		    else if (best_service_p->method == ipconfig_method_dhcp_e) {
++			panthera_ipconfiguration_trace("PANTHERA:IPConfiguration linklocal elect skip no-allocate dhcp child\n");
++			continue;
++		    }
++#endif
+ 		    linklocal_start(best_service_p, allocate);
+ 		}
+ 	    }
+@@ -4729,6 +4894,9 @@
+ 	       IP_FORMAT " inet_aifaddr() failed, %s (%d)", if_name(if_p),
+ 	       IP_LIST(&addr), strerror(errno), errno);
+     }
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration service set address ioctl returned\n");
++#endif
+     bzero(info_p, sizeof(*info_p));
+     info_p->addr = addr;
+     info_p->mask = mask;
+@@ -4737,8 +4905,17 @@
+     service_p->u.v4.ip_assigned_time = timer_current_secs();
+     service_p->u.v4.ip_conflict_count = 0;
+ 
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration service set address flush routes enter\n");
++#endif
+     flush_routes(if_link_index(if_p), G_ip_zeroes, broadcast);
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration service set address flush routes returned\n");
++#endif
+     linklocal_set_needs_attention();
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration service set address linklocal deferred\n");
++#endif
+     return;
+ }
+ 
+@@ -5469,6 +5646,7 @@
+     struct in_addr	loopback;
+     struct in_addr	loopback_net;
+     struct in_addr	loopback_mask;
++    int			ret;
+ 
+ #ifndef INADDR_LOOPBACK_NET
+ #define	INADDR_LOOPBACK_NET		(u_int32_t)0x7f000000
+@@ -5478,14 +5656,23 @@
+     loopback_mask.s_addr = htonl(IN_CLASSA_NET);
+     loopback_net.s_addr = htonl(INADDR_LOOPBACK_NET);
+ 
+-    if (inet_aifaddr("lo0", loopback, &loopback_mask, NULL) < 0) {
++    ret = inet_aifaddr("lo0", loopback, &loopback_mask, NULL);
++#ifdef PANTHERA
++    panthera_ipconfiguration_tracef("PANTHERA:IPConfiguration loopback inet_aifaddr returned ret=%d errno=%d\n",
++				   ret, errno);
++#endif
++    if (ret < 0) {
+ 	my_log(LOG_INFO, "set_loopback: inet_aifaddr() failed, %s (%d)", 
+ 	       strerror(errno), errno);
+     }
+ 
+     /* add 127/8 route */
+-    if (subnet_route_add(loopback, loopback_net, loopback_mask, "lo0")
+-	== FALSE) {
++    ret = subnet_route_add(loopback, loopback_net, loopback_mask, "lo0");
++#ifdef PANTHERA
++    panthera_ipconfiguration_tracef("PANTHERA:IPConfiguration loopback route add returned ret=%d errno=%d\n",
++				   ret, errno);
++#endif
++    if (ret == FALSE) {
+ 	my_log(LOG_INFO, "set_loopback: subnet_route_add() failed, %s (%d)", 
+ 	       strerror(errno), errno);
+     }
+@@ -5987,6 +6174,10 @@
+     ipconfig_method_t		method = info->method;
+     int				type = if_link_type(if_p);
+ 
++#ifdef PANTHERA
++    panthera_ipconfiguration_tracef("PANTHERA:IPConfiguration config method start if=%s method=%s type=%d\n",
++				   if_name(if_p), ipconfig_method_string(method), type);
++#endif
+     if (method == ipconfig_method_stf_e && type != IFT_STF) {
+ 	/* can't do 6to4 over anything but IFT_STF */
+ 	return (ipconfig_status_invalid_operation_e);
+@@ -6031,6 +6222,9 @@
+     if (func == NULL) {
+ 	return (ipconfig_status_operation_not_supported_e);
+     }
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration config method dispatch start\n");
++#endif
+     return (*func)(service_p, IFEventID_start_e, &info->method_data);
+ }
+ 
+@@ -7453,6 +7647,10 @@
+ 
+     /* populate all_services array with annotated IPv4[/IPv6] dict's */
+     service_IDs_count = CFArrayGetCount(service_IDs);
++#ifdef PANTHERA
++    panthera_ipconfiguration_tracef("PANTHERA:IPConfiguration entity all services=%ld\n",
++				   (long)service_IDs_count);
++#endif
+     for (i = 0; i < service_IDs_count; i++) {
+ 	CFBooleanRef		disable_until_needed = NULL;
+ 	CFDictionaryRef		if_dict;
+@@ -7471,6 +7669,9 @@
+ 	CFRelease(key);
+ 	if_dict = isA_CFDictionary(if_dict);
+ 	if (if_dict == NULL) {
++#ifdef PANTHERA
++	    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration entity service missing interface dict\n");
++#endif
+ 	    continue;
+ 	}
+ 	type = CFDictionaryGetValue(if_dict, kSCPropNetInterfaceType);
+@@ -7478,10 +7679,16 @@
+ 	    my_log(LOG_NOTICE,
+ 		   "IPConfiguration: Interface Type missing/invalid"
+ 		   "\nInterface = %@", if_dict);
++#ifdef PANTHERA
++	    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration entity service invalid interface type\n");
++#endif
+ 	    continue;
+ 	}
+ 	ifname = CFDictionaryGetValue(if_dict, kSCPropNetInterfaceDeviceName);
+ 	if (isA_CFString(ifname) == NULL) {
++#ifdef PANTHERA
++	    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration entity service missing device name\n");
++#endif
+ 	    continue;
+ 	}
+ 
+@@ -7493,6 +7700,9 @@
+ 					      type, ifname,
+ 					      disable_until_needed);
+ 	if (service_dict != NULL) {
++#ifdef PANTHERA
++	    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration entity append ipv4 service\n");
++#endif
+ 	    CFArrayAppendValue(all_services, service_dict);
+ 	    CFRelease(service_dict);
+ 	}
+@@ -7875,6 +8085,10 @@
+ 
+     /* if no services are defined, remove them all */
+     if (ServiceConfigListInit(&scl, is_ipv4, all, if_name(if_p)) == FALSE) {
++#ifdef PANTHERA
++	panthera_ipconfiguration_tracef("PANTHERA:IPConfiguration interface config no services if=%s ipv4=%d\n",
++				       if_name(if_p), is_ipv4);
++#endif
+ 	ifstate = IFStateList_ifstate_with_name(&S_ifstate_list, 
+ 						if_name(if_p), NULL);
+ 	if (ifstate != NULL) {
+@@ -7897,6 +8111,10 @@
+ 	int			i;
+ 	ServiceConfigRef	config;
+ 
++#ifdef PANTHERA
++	panthera_ipconfiguration_tracef("PANTHERA:IPConfiguration interface config services if=%s ipv4=%d count=%d\n",
++				       if_name(if_p), is_ipv4, scl.count);
++#endif
+ 	IFStateSetDisableUntilNeededRequested(ifstate,
+ 					      scl.disable_until_needed);
+ 	/* update each of the services that are configured */
+@@ -7998,6 +8216,9 @@
+     if (session == NULL) {
+ 	return;
+     }
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration notifier init enter\n");
++#endif
+     keys = CFArrayCreateMutable(NULL, 0, &kCFTypeArrayCallBacks);
+     patterns = CFArrayCreateMutable(NULL, 0, &kCFTypeArrayCallBacks);
+ 
+@@ -8124,14 +8345,34 @@
+     S_hostnames_key = SCDynamicStoreKeyCreateHostNames(NULL);
+     CFArrayAppendValue(keys, S_hostnames_key);
+ 
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration notifier set keys enter\n");
++    Boolean notify_keys_ok = SCDynamicStoreSetNotificationKeys(session, keys, patterns);
++    panthera_ipconfiguration_tracef("PANTHERA:IPConfiguration notifier set keys returned ok=%d\n",
++				    notify_keys_ok);
++#else
+     SCDynamicStoreSetNotificationKeys(session, keys, patterns);
++#endif
+     CFRelease(keys);
+     CFRelease(patterns);
+ 
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration notifier dispatch queue enter\n");
++    Boolean notify_queue_ok = SCDynamicStoreSetDispatchQueue(session, IPConfigurationAgentQueue());
++    panthera_ipconfiguration_tracef("PANTHERA:IPConfiguration notifier dispatch queue returned ok=%d\n",
++				    notify_queue_ok);
++#else
+     SCDynamicStoreSetDispatchQueue(session, IPConfigurationAgentQueue());
++#endif
+ 
+     /* initialize the computer name */
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration notifier computer name enter\n");
++#endif
+     computer_name_update(session);
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration notifier computer name returned\n");
++#endif
+     return;
+ }
+ 
+@@ -8221,59 +8462,171 @@
+  * - handles "async" work signaled from some context to avoid
+  *   re-entrancy issues
+  */
+-static dispatch_source_t	S_async_work_source;
++static boolean_t		S_async_work_initialized;
+ 
+ STATIC void
+ schedule_async_work(void)
+ {
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration schedule async work enter\n");
++#endif
++    if (S_async_work_initialized == FALSE) {
++#ifdef PANTHERA
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration schedule async work no source\n");
++#endif
++	return;
++    }
++    if (S_async_work_running) {
++	S_async_work_reschedule = TRUE;
++#ifdef PANTHERA
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration schedule async work deferred\n");
++#endif
++	return;
++    }
++#ifdef PANTHERA
++    if (S_async_work_queued) {
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration schedule async work already queued\n");
++	return;
++    }
++    S_async_work_queued = TRUE;
++#endif
+     dispatch_source_merge_data(S_async_work_source, 1);
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration schedule async work returned\n");
++#endif
+ }
+ 
+ STATIC void
+ perform_async_work_requiring_store(void)
+ {
+     my_log(LOG_DEBUG, "%s", __func__);
++#ifdef PANTHERA
+     if (S_linklocal_needs_attention
+ 	|| S_disable_until_needed_needs_attention) {
+ 	CFArrayRef		service_order = NULL;
+ 
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration async work service order enter\n");
+ 	service_order = S_copy_service_order(S_scd_session);
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration async work service order returned\n");
+ 	if (S_linklocal_needs_attention) {
++	    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration async work linklocal elect enter\n");
+ 	    S_linklocal_needs_attention = FALSE;
+ 	    linklocal_elect(service_order);
++	    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration async work linklocal elect returned\n");
+ 	}
+ 	if (S_disable_until_needed_needs_attention) {
+ 	    S_disable_until_needed_needs_attention = FALSE;
++	    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration async work disable-until-needed enter\n");
+ 	    DisableUntilNeededProcess(&S_ifstate_list, service_order);
++	    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration async work disable-until-needed returned\n");
+ 	}
+ 	my_CFRelease(&service_order);
+     }
+     if (S_active_during_sleep_needs_attention) {
+ 	S_active_during_sleep_needs_attention = FALSE;
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration async work active-sleep enter\n");
+ 	ActiveDuringSleepProcess(&S_ifstate_list);
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration async work active-sleep returned\n");
+     }
+     if (S_ipv4_publish_needs_attention) {
+ 	S_ipv4_publish_needs_attention = FALSE;
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration async work ipv4-publish enter\n");
+ 	IPv4ServicePublishProcess(&S_ifstate_list);
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration async work ipv4-publish returned\n");
+     }
++#else
++    if (S_linklocal_needs_attention
++	|| S_disable_until_needed_needs_attention) {
++	CFArrayRef		service_order = NULL;
++
++	service_order = S_copy_service_order(S_scd_session);
++	if (S_linklocal_needs_attention) {
++	    S_linklocal_needs_attention = FALSE;
++	    linklocal_elect(service_order);
++	}
++	if (S_disable_until_needed_needs_attention) {
++	    S_disable_until_needed_needs_attention = FALSE;
++	    DisableUntilNeededProcess(&S_ifstate_list, service_order);
++	}
++	my_CFRelease(&service_order);
++    }
++    if (S_active_during_sleep_needs_attention) {
++	S_active_during_sleep_needs_attention = FALSE;
++	ActiveDuringSleepProcess(&S_ifstate_list);
++    }
++    if (S_ipv4_publish_needs_attention) {
++	S_ipv4_publish_needs_attention = FALSE;
++	IPv4ServicePublishProcess(&S_ifstate_list);
++    }
++#endif
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration async work dynamic publish enter\n");
++#endif
+     my_SCDynamicStorePublish(S_scd_session);
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration async work dynamic publish returned\n");
++#endif
+     return;
+ }
+ 
+ STATIC void
+ perform_async_work(void)
+ {
++#ifdef PANTHERA
++    S_async_work_queued = FALSE;
++#endif
++    S_async_work_running = TRUE;
+     if (S_scd_session != NULL) {
++#ifdef PANTHERA
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration async work store enter\n");
++#endif
+ 	perform_async_work_requiring_store();
++#ifdef PANTHERA
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration async work store returned\n");
++#endif
+     }
+     if (S_sockets_need_close) {
+ 	S_sockets_need_close = FALSE;
+ 	my_log(LOG_DEBUG, "sockets need to be closed");
++#ifdef PANTHERA
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration async work ifutil_close enter\n");
++#endif
+ 	ifutil_close();
++#ifdef PANTHERA
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration async work ifutil_close returned\n");
++#endif
+     }
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration async work clear-running enter\n");
++#endif
++    S_async_work_running = FALSE;
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration async work clear-running returned\n");
++#endif
++    if (S_async_work_reschedule) {
++	S_async_work_reschedule = FALSE;
++#ifdef PANTHERA
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration async work reschedule enter\n");
++#endif
++	schedule_async_work();
++#ifdef PANTHERA
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration async work reschedule returned\n");
++#endif
++    }
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration async work handler return\n");
++#endif
+ }
+ 
+ STATIC void
++perform_async_work_context(void * context)
++{
++    (void)context;
++    (void)dispatch_source_get_data(S_async_work_source);
++    perform_async_work();
++}
++
++STATIC void
+ IFState_update_link_event_data(IFStateRef ifstate, link_event_data_t link_event,
+ 			       link_status_t * link_status_p)
+ {
+@@ -8559,25 +8912,28 @@
+ static void
+ initialize_async_source(void)
+ {
+-    dispatch_block_t	handler;
+     dispatch_source_t	source;
+ 
+-    /* initialize the "observer" */
+-    source = dispatch_source_create(DISPATCH_SOURCE_TYPE_DATA_ADD,
+-				    0,
+-				    0,
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration async source create enter\n");
++#endif
++    source = dispatch_source_create(DISPATCH_SOURCE_TYPE_DATA_ADD, 0, 0,
+ 				    IPConfigurationAgentQueue());
+-    handler = ^{
+-	perform_async_work();
+-    };
+     S_async_work_source = source;
+-    dispatch_source_set_event_handler(source, handler);
++    dispatch_source_set_event_handler_f(source, perform_async_work_context);
+     dispatch_activate(source);
++    S_async_work_initialized = TRUE;
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration async source create returned\n");
++#endif
+ }
+ 
+ static void
+ start_initialization(SCDynamicStoreRef session)
+ {
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start init strings enter\n");
++#endif
+     /* initialize strings */
+     S_setup_service_prefix = SCDynamicStoreKeyCreate(NULL,
+ 						     CFSTR("%@/%@/%@/"), 
+@@ -8590,17 +8946,40 @@
+ 						       kSCDynamicStoreDomainState,
+ 						       kSCCompNetwork,
+ 						       kSCCompInterface);
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start init strings returned\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start init notifier enter\n");
++#endif
+ 
+     /* install run-time notifiers */
+     notifier_init(session);
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start init notifier returned\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start init interface list enter\n");
++#endif
+ 
+     (void)update_interface_list();
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start init interface list returned\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start init netboot enter\n");
++#endif
+ 
+     (void)S_netboot_init();
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start init netboot returned\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start init configure cache enter\n");
++#endif
+ 
+     configure_from_cache(session);
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start init configure cache returned\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start init power enter\n");
++#endif
+ 
+     /* register for sleep/wake */
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start init power skipped\n");
++#else
+ #if TARGET_OS_OSX
+     if (S_use_maintenance_wake) {
+ 	new_power_notification_init();
+@@ -8611,6 +8990,10 @@
+ #else /* TARGET_OS_OSX */
+     S_power_connection = power_notification_init();
+ #endif /* TARGET_OS_OSX */
++#endif
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start init power returned\n");
++#endif
+     return;
+ }
+ 
+@@ -9375,8 +9758,10 @@
+ user_confirm_conflict(CFUserNotificationRef userNotification,
+ 		      CFOptionFlags response_flags)
+ {
+-    dispatch_async(IPConfigurationAgentQueue(),
+-		   ^{ cleanup_user_notification(userNotification); });
++    (void)response_flags;
++    dispatch_async_f(IPConfigurationAgentQueue(),
++		     userNotification,
++		     (dispatch_function_t)cleanup_user_notification);
+ }
+ 
+ static CFURLRef
+@@ -9800,6 +10185,17 @@
+     }
+     G_must_broadcast 
+ 	= S_get_plist_boolean(plist, CFSTR("MustBroadcast"), FALSE);
++#ifdef PANTHERA
++    /*
++     * Panthera's current IPv4 stack does not deliver DHCP unicasts for an
++     * offered address before that address is configured. Use DHCP's standard
++     * broadcast flag so SELECT ACKs remain receivable through the normal BOOTP
++     * socket path.
++     */
++    G_must_broadcast = TRUE;
++    panthera_ipconfiguration_tracef("PANTHERA:IPConfiguration globals must_broadcast=%d\n",
++				    G_must_broadcast);
++#endif
+     G_max_retries = S_get_plist_int(plist, CFSTR("RetryCount"), 
+ 				    MAX_RETRIES);
+     G_gather_secs = S_get_plist_int(plist, CFSTR("GatherTimeSeconds"), 
+@@ -10185,23 +10581,109 @@
+ sockets_need_close(void)
+ {
+     S_sockets_need_close = TRUE;
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration sockets need close scheduled\n");
++#endif
+     schedule_async_work();
+ }
+ 
++#ifdef PANTHERA
++STATIC boolean_t
++panthera_ipconfiguration_trace_enabled(void)
++{
++    static int enabled = -1;
++
++    if (enabled < 0) {
++	const char *value = getenv("PANTHERA_IPCONFIGURATION_TRACE");
++	enabled = (value != NULL && value[0] != '\0'
++		   && strcmp(value, "0") != 0);
++    }
++    return (enabled != 0);
++}
++
++STATIC void
++panthera_ipconfiguration_trace(const char *msg)
++{
++    int fd;
++
++    if (!panthera_ipconfiguration_trace_enabled()) {
++	return;
++    }
++    (void)write(STDERR_FILENO, msg, strlen(msg));
++    fd = open("/dev/console", O_WRONLY | O_NOCTTY);
++    if (fd >= 0) {
++	(void)write(fd, msg, strlen(msg));
++	(void)close(fd);
++    }
++}
++
++STATIC void
++panthera_ipconfiguration_tracef(const char *fmt, ...)
++{
++    char buf[256];
++    va_list ap;
++
++    va_start(ap, fmt);
++    (void)vsnprintf(buf, sizeof(buf), fmt, ap);
++    va_end(ap);
++    panthera_ipconfiguration_trace(buf);
++}
++#endif
++
+ void
+ load(CFBundleRef bundle, Boolean bundleVerbose)
+ {
+     dispatch_queue_t	queue;
+ 
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration load enter\n");
++    if (bundle == NULL) {
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration load bundle missing\n");
++	return;
++    }
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration load init_log enter\n");
++#endif
+     init_log();
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration load init_log ok\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration load bundle retain enter\n");
++#endif
+     S_bundle = (CFBundleRef)CFRetain(bundle);
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration load bundle retain ok\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration load set runloop enter\n");
++#endif
+     IPConfigurationAgentSetRunLoop(CFRunLoopGetCurrent());
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration load set runloop ok\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration load queue enter\n");
++#endif
+     queue = IPConfigurationAgentQueue();
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration load queue ok\n");
++#endif
+     if (wd_endpoint_add_queue != NULL) { /* "weak_import" */
++#ifdef PANTHERA
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration load watchdog enter\n");
++#endif
+ 	wd_endpoint_add_queue(queue);
++#ifdef PANTHERA
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration load watchdog ok\n");
++#endif
+     }
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration load async source enter\n");
++#endif
+     initialize_async_source();
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration load async source ok\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration load close callback enter\n");
++#endif
+     ifutil_set_close_required_callback(sockets_need_close);
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration load close callback ok\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration load done\n");
++#endif
+     return;
+ }
+ 
+@@ -10214,24 +10696,72 @@
+     my_log(LOG_INFO, "IPConfiguration starting");
+ 
+     /* register for prefs changes, check current state */
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start control prefs enter\n");
+     check_prefs(IPConfigurationControlPrefsInit(IPConfigurationAgentQueue(),
+ 						check_prefs));
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start control prefs ok\n");
++#else
++    check_prefs(IPConfigurationControlPrefsInit(IPConfigurationAgentQueue(),
++						check_prefs));
++#endif
+     /* create paths */
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start create paths enter\n");
++#endif
+     ipconfigd_create_paths();
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start create paths ok\n");
++#endif
+ 
+     /* initialize CGA */
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start cga enter\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start cga init enter\n");
++#endif
+     CGAInit(S_ipv6_linklocal_modifier_expires);
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start cga init returned\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start cga ok\n");
++#endif
+ 
+     /* set globals */
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start globals enter\n");
++#endif
+     S_set_globals();
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start globals ok\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start dhcp prefs create enter\n");
++#endif
+     prefs = SCPreferencesCreate(NULL, CFSTR("IPConfiguration.DHCPClient"),
+ 				kDHCPClientPreferencesID);
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start dhcp prefs create returned\n");
++#endif
+     if (prefs == NULL) {
+ 	my_log(LOG_NOTICE,
+ 	       "IPConfiguration: SCPreferencesCreate failed: %s",
+ 	       SCErrorString(SCError()));
+ 	return;
+     }
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start dhcp prefs callback enter\n");
++    Boolean callback_ok = SCPreferencesSetCallback(prefs,
++						   dhcp_preferences_changed,
++						   NULL);
++    Boolean queue_ok = callback_ok
++	? SCPreferencesSetDispatchQueue(prefs, IPConfigurationAgentQueue())
++	: FALSE;
++    panthera_ipconfiguration_tracef("PANTHERA:IPConfiguration start dhcp prefs callback=%d queue=%d\n",
++				    callback_ok, queue_ok);
++    if (!callback_ok || !queue_ok) {
++	my_log(LOG_NOTICE, "IPConfigurationSCPreferencesSetCallback failed: %s",
++	       SCErrorString(SCError()));
++	my_CFRelease(&prefs);
++	return;
++    }
++#else
+     if (!SCPreferencesSetCallback(prefs,
+ 				 dhcp_preferences_changed,
+ 				 NULL)
+@@ -10241,20 +10771,45 @@
+ 	my_CFRelease(&prefs);
+ 	return;
+     }
++#endif
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start dhcp prefs callback ok\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start dhcp params enter\n");
++#endif
+     S_add_dhcp_parameters(prefs);
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start dhcp params ok\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start dhcp prefs sync enter\n");
++#endif
+     SCPreferencesSynchronize(prefs);
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start dhcp prefs sync ok\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start dynamic store enter\n");
++#endif
+ 
+     S_scd_session = SCDynamicStoreCreate(NULL,
+ 					 CFSTR("IPConfiguration"),
+ 					 handle_change, NULL);
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start dynamic store returned\n");
++#endif
+     if (S_scd_session == NULL) {
+ 	my_log(LOG_NOTICE, "SCDynamicStoreCreate failed: %s",
+ 	       SCErrorString(SCError()));
+     }
+ 
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start bootp session enter\n");
++#endif
+     bootp_session_init(G_client_port);
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start bootp session ok\n");
++#endif
+ 
+     /* initialize the default values structure */
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start arp values enter\n");
++#endif
+     bzero(&arp_values, sizeof(arp_values));
+     arp_values.probe_count = &S_arp_probe_count;
+     arp_values.probe_gratuitous_count = &S_arp_gratuitous_count;
+@@ -10263,40 +10818,110 @@
+     arp_values.detect_interval = &S_arp_detect_retry;
+     arp_values.conflict_retry_count = &S_arp_conflict_retry;
+     arp_values.conflict_delay_interval = &S_arp_conflict_delay;
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start arp session enter\n");
++#endif
+     arp_session_init(S_is_our_hardware_address, &arp_values);
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start arp session ok\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start ifstate init enter\n");
++#endif
+     dynarray_init(&S_ifstate_list, IFState_free, NULL);
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start ifstate init ok\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start cleanup wake enter\n");
++#endif
+ 
+     CleanupWakeEvents();
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start cleanup wake ok\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start loopback enter\n");
++#endif
+ 
+     /* set the loopback interface address */
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start loopback set enter\n");
++#endif
+     set_loopback();
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start loopback set returned\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start loopback ok\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration start done\n");
++#endif
+     return;
+ }
+ 
+ STATIC void
+ handle_prime(void)
+ {
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration prime handle start\n");
++#endif
+     if (S_scd_session == NULL) {
++#ifdef PANTHERA
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration prime update interfaces enter\n");
++#endif
+ 	update_interface_list();
++#ifdef PANTHERA
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration prime update interfaces returned\n");
++#endif
+     }
+     else {
+ 	/* begin interface initialization */
++#ifdef PANTHERA
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration prime start initialization enter\n");
++#endif
+ 	start_initialization(S_scd_session);
++#ifdef PANTHERA
++	panthera_ipconfiguration_trace("PANTHERA:IPConfiguration prime start initialization returned\n");
++#endif
+     }
+ 
+     /* initialize the MiG server */
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration prime server init enter\n");
++#endif
+     server_init();
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration prime server init returned\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration prime state handler enter\n");
++#endif
+     IPConfigurationAddStateHandler();
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration prime state handler returned\n");
++#endif
+ }
+ 
++STATIC void
++handle_prime_context(void * context);
++
+ void
+ prime(void)
+ {
+-    dispatch_async(IPConfigurationAgentQueue(),
+-		   ^{ handle_prime(); });
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration prime enter\n");
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration prime async dispatch enter\n");
++#endif
++    dispatch_async_f(IPConfigurationAgentQueue(), NULL, handle_prime_context);
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration prime async dispatch returned\n");
++#endif
+ }
+ 
+ STATIC void
++handle_prime_context(void * context)
++{
++    (void)context;
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration handle prime enter\n");
++#endif
++    handle_prime();
++#ifdef PANTHERA
++    panthera_ipconfiguration_trace("PANTHERA:IPConfiguration handle prime returned\n");
++#endif
++}
++
++STATIC void
+ handle_stop(CFRunLoopSourceRef stopRLS)
+ {
+     IFStateList_all_services_event(&S_ifstate_list,
+@@ -10307,6 +10932,6 @@
+ void
+ stop(CFRunLoopSourceRef	stopRLS)
+ {
+-    dispatch_async(IPConfigurationAgentQueue(),
+-		   ^{ handle_stop(stopRLS); });
++    dispatch_async_f(IPConfigurationAgentQueue(), stopRLS,
++		     (dispatch_function_t)handle_stop);
+ }
+--- IPConfiguration.bproj/server.c
++++ IPConfiguration.bproj/server.c
+@@ -24,6 +24,13 @@
+ #include <stdio.h>
+ #include <unistd.h>
+ #include <stdlib.h>
++#include <pthread.h>
++#include <stdint.h>
++#ifdef PANTHERA
++#include <fcntl.h>
++#include <stdarg.h>
++#include <string.h>
++#endif
+ #include <mach/mach.h>
+ #include <mach/mach_error.h>
+ #include <servers/bootstrap.h>
+@@ -43,12 +50,48 @@
+ #include "ipconfig_ext.h"
+ #include "globals.h"
+ #include "IPConfigurationUtilPrivate.h"
+-#include <dispatch/private.h>
+ 
+ static uid_t S_uid = -1;
+ static pid_t S_pid = -1;
+ 
++#ifdef PANTHERA
++static int
++panthera_server_trace_enabled(void)
++{
++    static int enabled = -1;
+ 
++    if (enabled < 0) {
++	const char *value = getenv("PANTHERA_IPCONFIGURATION_TRACE");
++	enabled = (value != NULL && value[0] != '\0'
++		   && strcmp(value, "0") != 0);
++    }
++    return (enabled != 0);
++}
++
++static void
++panthera_server_trace(const char *message)
++{
++    if (!panthera_server_trace_enabled()) {
++	return;
++    }
++    (void)fprintf(stderr, "%s", message);
++    (void)fflush(stderr);
++}
++
++static void
++panthera_server_tracef(const char *format, ...)
++{
++    char buffer[256];
++    va_list ap;
++
++    va_start(ap, format);
++    (void)vsnprintf(buffer, sizeof(buffer), format, ap);
++    va_end(ap);
++    panthera_server_trace(buffer);
++}
++#endif
++
++
+ #define	kIPConfigurationServiceEntitlement	CFSTR("com.apple.IPConfigurationService")	/* boolean */
+ 
+ #define kIPConfigurationGetInformationEntitlement	CFSTR("com.apple.IPConfiguration.get-information")	/* boolean */
+@@ -614,41 +657,65 @@
+     union __ReplyUnion___ipconfig_subsystem rep;
+ } IPConfigurationUnion;
+ 
++static void *
++server_thread(void *context)
++{
++    mach_port_t		server_port = (mach_port_t)(uintptr_t)context;
++    mach_msg_return_t	ret;
++
++    #ifdef PANTHERA
++    panthera_server_trace("PANTHERA:IPConfiguration server mach thread enter\n");
++    #endif
++    ret = mach_msg_server(ipconfig_server,
++			  sizeof(IPConfigurationUnion),
++			  server_port,
++			  MACH_RCV_TRAILER_TYPE(MACH_MSG_TRAILER_FORMAT_0) |
++			  MACH_RCV_TRAILER_ELEMENTS(MACH_RCV_TRAILER_AUDIT));
++    #ifdef PANTHERA
++    panthera_server_tracef("PANTHERA:IPConfiguration server mach thread returned ret=%d\n",
++			   ret);
++    #endif
++    if (ret != MACH_MSG_SUCCESS) {
++	my_log(LOG_NOTICE, "%s: failed %d", __func__, ret);
++    }
++    return (NULL);
++}
++
+ PRIVATE_EXTERN void
+ server_init()
+ {
+-    dispatch_block_t	handler;
+     mach_port_t		server_port;
+-    dispatch_source_t	source;
++    pthread_t		thread;
+     kern_return_t 	status;
++    int			error;
+ 
+-    status = bootstrap_check_in(bootstrap_port, IPCONFIG_SERVER, 
++    #ifdef PANTHERA
++    panthera_server_trace("PANTHERA:IPConfiguration server bootstrap check-in enter\n");
++    #endif
++    status = bootstrap_check_in(bootstrap_port, IPCONFIG_SERVER,
+ 				&server_port);
++    #ifdef PANTHERA
++    panthera_server_tracef("PANTHERA:IPConfiguration server bootstrap check-in returned status=%d port=%u\n",
++			   status, server_port);
++    #endif
+     if (status != BOOTSTRAP_SUCCESS) {
+ 	my_log(LOG_NOTICE,
+ 	       "IPConfiguration: bootstrap_check_in failed, %s",
+ 	       mach_error_string(status));
+ 	return;
+     }
+-    source = dispatch_source_create(DISPATCH_SOURCE_TYPE_MACH_RECV,
+-				    server_port,
+-				    0,
+-				    IPConfigurationAgentQueue());
+-    handler = ^{
+-	mach_msg_return_t ret;
+-
+-	ret = dispatch_mig_server(source,
+-				  sizeof(IPConfigurationUnion),
+-				  ipconfig_server);
+-	switch (ret) {
+-	case MACH_MSG_SUCCESS:
+-	    break;
+-	default:
+-	    my_log(LOG_NOTICE, "%s: failed %d", __func__, ret);
+-	    break;
+-	}
+-    };
+-    dispatch_source_set_event_handler(source, handler);
+-    dispatch_activate(source);
++    #ifdef PANTHERA
++    panthera_server_trace("PANTHERA:IPConfiguration server mach thread create enter\n");
++    #endif
++    error = pthread_create(&thread, NULL, server_thread,
++			   (void *)(uintptr_t)server_port);
++    if (error != 0) {
++	my_log(LOG_NOTICE, "IPConfiguration: pthread_create failed, %d", error);
++	return;
++    }
++    (void)pthread_detach(thread);
++    #ifdef PANTHERA
++    panthera_server_trace("PANTHERA:IPConfiguration server mach thread create returned\n");
++    #endif
+     return;
+ }
+--- IPConfiguration.bproj/timer.c
++++ IPConfiguration.bproj/timer.c
+@@ -51,6 +51,10 @@
+ #include "timer.h"
+ 
+ #include <CoreFoundation/CFDate.h>
++#ifdef PANTHERA
++#include <stdarg.h>
++#include "IPConfigurationAgentUtil.h"
++#endif
+ 
+ struct timer_callout {
+     char *		name;
+@@ -59,6 +63,7 @@
+     void *		arg2;
+     void *		arg3;
+     dispatch_source_t	timer;
++    absolute_time_t	fire_time;
+     uint32_t		time_generation;
+     boolean_t		enabled;
+     boolean_t		suspended;
+@@ -78,9 +83,19 @@
+ static void
+ timer_suspend(timer_callout_t * callout)
+ {
++#ifdef PANTHERA
+     if (callout->timer == NULL) {
+ 	return;
+     }
++    dispatch_source_set_timer(callout->timer,
++			      DISPATCH_TIME_FOREVER,
++			      DISPATCH_TIME_FOREVER,
++			      0);
++    return;
++#endif
++    if (callout->timer == NULL) {
++	return;
++    }
+     if (!callout->suspended) {
+ 	dispatch_suspend(callout->timer);
+ 	callout->suspended = TRUE;
+@@ -91,22 +106,93 @@
+ static void
+ timer_resume(timer_callout_t * callout)
+ {
++#ifdef PANTHERA
++    (void)callout;
++    return;
++#endif
+     if (callout->suspended) {
+ 	dispatch_resume(callout->timer);
+ 	callout->suspended = FALSE;
+     }
+ }
+ 
++#ifdef PANTHERA
++static int
++panthera_timer_trace_enabled(void)
++{
++    static int enabled = -1;
++
++    if (enabled < 0) {
++	const char *value = getenv("PANTHERA_IPCONFIGURATION_TRACE");
++	enabled = (value != NULL && value[0] != '\0' && strcmp(value, "0") != 0);
++    }
++    return (enabled != 0);
++}
++
+ static void
++panthera_timer_trace_msg(const char *message)
++{
++    if (!panthera_timer_trace_enabled()) {
++	return;
++    }
++    (void)write(STDERR_FILENO, message, strlen(message));
++}
++
++static void
++panthera_timer_tracef(const char *fmt, ...)
++{
++    char buffer[256];
++    va_list ap;
++    int len;
++
++    if (!panthera_timer_trace_enabled()) {
++	return;
++    }
++    va_start(ap, fmt);
++    len = vsnprintf(buffer, sizeof(buffer), fmt, ap);
++    va_end(ap);
++    if (len <= 0) {
++	return;
++    }
++    if ((size_t)len >= sizeof(buffer)) {
++	len = (int)sizeof(buffer) - 1;
++    }
++    (void)write(STDERR_FILENO, buffer, (size_t)len);
++}
++
++static absolute_time_t
++panthera_timer_now(void)
++{
++    struct timeval tv;
++
++    if (gettimeofday(&tv, NULL) != 0) {
++	return CFAbsoluteTimeGetCurrent();
++    }
++    return (absolute_time_t)tv.tv_sec
++	+ ((absolute_time_t)tv.tv_usec / USECS_PER_SEC);
++}
++#endif
++
++static void
+ timer_notify_check(void)
+ {
+     int		check = 0;
+     int		status;
+ 
+     if (S_time_change_registered == FALSE) {
++#ifdef PANTHERA
++	panthera_timer_trace_msg("PANTHERA:timer notify_check skipped not registered\n");
++#endif
+ 	return;
+     }
++#ifdef PANTHERA
++    panthera_timer_trace_msg("PANTHERA:timer notify_check enter\n");
++#endif
+     status = notify_check(S_time_change_token, &check);
++#ifdef PANTHERA
++    panthera_timer_tracef("PANTHERA:timer notify_check returned status=%d check=%d\n",
++			  status, check);
++#endif
+     if (status != NOTIFY_STATUS_OK) {
+ 	my_log(LOG_NOTICE, "timer: notify_check failed with %d", status);
+     }
+@@ -119,6 +205,11 @@
+ static void
+ timer_register_time_change(void)
+ {
++#ifdef PANTHERA
++    panthera_timer_trace_msg("PANTHERA:timer register_time_change skipped unsupported\n");
++    S_time_change_registered = FALSE;
++    return;
++#else
+     int		status;
+ 
+     if (S_time_change_registered) {
+@@ -135,6 +226,7 @@
+     /* throw away the first check, since it always says check=1 */
+     timer_notify_check();
+     return;
++#endif
+ }
+ 
+ /**
+@@ -146,28 +238,117 @@
+     return (callout->name);
+ }
+ 
++#ifdef PANTHERA
++static void
++panthera_timer_trace(const char * event, timer_callout_t * callout,
++		     absolute_time_t relative_time, absolute_time_t now)
++{
++    char line[256];
++    int n;
++
++    if (!panthera_timer_trace_enabled()) {
++	return;
++    }
++    n = snprintf(line, sizeof(line),
++		 "PANTHERA:timer %s name=%s rel=%0.3f now=%0.3f fire=%0.3f enabled=%d\n",
++		 event,
++		 timer_name(callout) != NULL ? timer_name(callout) : "(null)",
++		 relative_time,
++		 now,
++		 callout->fire_time,
++		 callout->enabled);
++    if (n <= 0) {
++	return;
++    }
++    if ((size_t)n > sizeof(line)) {
++	n = (int)sizeof(line);
++    }
++    (void)write(STDERR_FILENO, line, (size_t)n);
++}
++#endif
++
+ static void 
+ timer_callout_process(timer_callout_t *	callout)
+ {
+     if (callout->func && callout->enabled) {
++#ifdef PANTHERA
++	absolute_time_t now = panthera_timer_now();
++	dispatch_source_t timer = NULL;
++	uint64_t delta;
++#else
++	absolute_time_t now = CFAbsoluteTimeGetCurrent();
++#endif
++
++	if (now + 0.001 < callout->fire_time) {
++#ifdef PANTHERA
++	    delta = (uint64_t)((callout->fire_time - now) * NSEC_PER_SEC);
++	    panthera_timer_trace("early", callout, callout->fire_time - now, now);
++	    if (callout->timer != NULL && delta > 0) {
++		dispatch_source_set_timer(callout->timer,
++					  dispatch_time(DISPATCH_TIME_NOW, delta),
++					  DISPATCH_TIME_FOREVER,
++					  0);
++	    }
++#endif
++	    return;
++	}
+ 	callout->enabled = FALSE;
++#ifdef PANTHERA
++	panthera_timer_trace("fire", callout, 0, now);
++	timer = callout->timer;
++	callout->timer = NULL;
++	if (timer != NULL) {
++	    dispatch_source_cancel(timer);
++	    dispatch_release(timer);
++	}
++#endif
+ 	(*callout->func)(callout->arg1, callout->arg2, callout->arg3);
+     }
+     return;
+ }
+ 
++static void
++timer_callout_process_context(void * context)
++{
++    timer_callout_process((timer_callout_t *)context);
++}
++
+ timer_callout_t *
+ timer_callout_init(const char * name)
+ {
+     timer_callout_t * callout;
+ 
++#ifdef PANTHERA
++    panthera_timer_tracef("PANTHERA:timer init enter name=%s\n",
++			  name != NULL ? name : "(null)");
++    panthera_timer_trace_msg("PANTHERA:timer init alloc enter\n");
++#endif
+     callout = malloc(sizeof(*callout));
++#ifdef PANTHERA
++    panthera_timer_tracef("PANTHERA:timer init alloc returned ptr=%p\n", callout);
++#endif
+     if (callout == NULL)
+ 	return (NULL);
++#ifdef PANTHERA
++    panthera_timer_trace_msg("PANTHERA:timer init bzero enter\n");
++#endif
+     bzero(callout, sizeof(*callout));
++#ifdef PANTHERA
++    panthera_timer_trace_msg("PANTHERA:timer init bzero returned\n");
++#endif
+     callout->name = strdup(name);
++#ifdef PANTHERA
++    panthera_timer_trace_msg("PANTHERA:timer init register_time_change enter\n");
++#endif
+     timer_register_time_change();
++#ifdef PANTHERA
++    panthera_timer_trace_msg("PANTHERA:timer init register_time_change returned\n");
++#endif
+     callout->time_generation = S_time_generation;
++#ifdef PANTHERA
++    panthera_timer_tracef("PANTHERA:timer init returned ptr=%p name=%s\n",
++			  callout, name != NULL ? name : "(null)");
++#endif
+     return (callout);
+ }
+ 
+@@ -179,6 +360,10 @@
+     if (callout == NULL) {
+ 	return;
+     }
++#ifdef PANTHERA
++    panthera_timer_tracef("PANTHERA:timer free enter ptr=%p name=%s\n",
++			  callout, timer_name(callout) != NULL ? timer_name(callout) : "(null)");
++#endif
+     if (callout->timer != NULL) {
+ 	dispatch_source_cancel(callout->timer);
+ 	/* must resume a source before releasing it (see rdar://24585472 */
+@@ -189,6 +374,9 @@
+     free(callout->name);
+     free(callout);
+     *callout_p = NULL;
++#ifdef PANTHERA
++    panthera_timer_trace_msg("PANTHERA:timer free returned\n");
++#endif
+     return;
+ }
+ 
+@@ -200,6 +388,9 @@
+ {
+     boolean_t	first = FALSE;
+     uint64_t	delta;
++#ifdef PANTHERA
++    absolute_time_t now;
++#endif
+ 
+     if (callout == NULL) {
+ 	return (0);
+@@ -214,30 +405,67 @@
+     callout->arg3 = arg3;
+     callout->enabled = TRUE;
+     callout->time_generation = S_time_generation;
++#ifdef PANTHERA
++    now = panthera_timer_now();
++    callout->fire_time = now + relative_time;
++#else
++    callout->fire_time = CFAbsoluteTimeGetCurrent() + relative_time;
++#endif
++    delta = relative_time * NSEC_PER_SEC;
+     if (callout->timer == NULL) {
+-	dispatch_block_t		b;
+-
+ 	first = TRUE;
++#ifdef PANTHERA
++	panthera_timer_tracef("PANTHERA:timer set source_create enter name=%s\n",
++			      timer_name(callout) != NULL ? timer_name(callout) : "(null)");
++#endif
+ 	callout->timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,
+ 						0,
+ 						0,
+ 						IPConfigurationAgentQueue());
+-	b = ^{
+-	    timer_callout_process(callout);
+-	};
+-	dispatch_source_set_event_handler(callout->timer, b);
++#ifdef PANTHERA
++	panthera_timer_tracef("PANTHERA:timer set source_create returned source=%p\n",
++			      callout->timer);
++	panthera_timer_trace_msg("PANTHERA:timer set context/handler enter\n");
++#endif
++	dispatch_set_context(callout->timer, callout);
++	dispatch_source_set_event_handler_f(callout->timer,
++					    timer_callout_process_context);
++#ifdef PANTHERA
++	panthera_timer_trace_msg("PANTHERA:timer set context/handler returned\n");
++#endif
+     }
+-    delta = relative_time * NSEC_PER_SEC;
++#ifdef PANTHERA
++    panthera_timer_tracef("PANTHERA:timer set timer_set enter delta=%llu\n",
++			  (unsigned long long)delta);
++#endif
+     dispatch_source_set_timer(callout->timer,
+ 			      dispatch_time(DISPATCH_TIME_NOW, delta),
+ 			      DISPATCH_TIME_FOREVER,
+ 			      0);
++#ifdef PANTHERA
++    panthera_timer_trace_msg("PANTHERA:timer set timer_set returned\n");
++#endif
+     if (first) {
++#ifdef PANTHERA
++	panthera_timer_trace_msg("PANTHERA:timer set activate enter\n");
++#endif
+ 	dispatch_activate(callout->timer);
++#ifdef PANTHERA
++	panthera_timer_trace_msg("PANTHERA:timer set activate returned\n");
++#endif
+     }
+     else {
++#ifdef PANTHERA
++	panthera_timer_trace_msg("PANTHERA:timer set resume enter\n");
++#endif
+ 	timer_resume(callout);
++#ifdef PANTHERA
++	panthera_timer_trace_msg("PANTHERA:timer set resume returned\n");
++#endif
+     }
++#ifdef PANTHERA
++    panthera_timer_trace("set", callout, relative_time, now);
++#endif
+     my_log(LOG_DEBUG, "timer(%s): %0.09gs",
+ 	   timer_name(callout),
+ 	   relative_time);
+@@ -283,9 +511,30 @@
+ static void
+ timer_cancel_common(timer_callout_t * callout)
+ {
++#ifdef PANTHERA
++    dispatch_source_t timer;
++    absolute_time_t now;
++#endif
++
+     callout->func = NULL;
+     callout->time_generation = S_time_generation;
++#ifdef PANTHERA
++    now = panthera_timer_now();
++    if (callout->enabled) {
++	panthera_timer_trace("cancel", callout, 0, now);
++    }
++#endif
++    callout->fire_time = 0;
++#ifdef PANTHERA
++    timer = callout->timer;
++    callout->timer = NULL;
++    if (timer != NULL) {
++	dispatch_source_cancel(timer);
++	dispatch_release(timer);
++    }
++#else
+     timer_suspend(callout);
++#endif
+     callout->enabled = FALSE;
+     return;
+ }
+--- bootplib/IPConfigurationControlPrefs.c
++++ bootplib/IPConfigurationControlPrefs.c
+@@ -37,6 +37,14 @@
+ #include <SystemConfiguration/SCPrivate.h>
+ #include <SystemConfiguration/scprefs_observer.h>
+ #include <TargetConditionals.h>
++#ifdef PANTHERA
++#include <fcntl.h>
++#include <stdarg.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <unistd.h>
++#endif
+ #include "IPConfigurationControlPrefs.h"
+ #include "symbol_scope.h"
+ #include "cfutil.h"
+@@ -97,6 +105,42 @@
+ STATIC SCPreferencesRef				S_prefs;
+ STATIC IPConfigurationControlPrefsCallBack	S_callback;
+ 
++#ifdef PANTHERA
++STATIC boolean_t
++panthera_control_prefs_trace_enabled(void)
++{
++    static int enabled = -1;
++
++    if (enabled < 0) {
++	const char *value = getenv("PANTHERA_IPCONFIGURATION_TRACE");
++	enabled = (value != NULL && value[0] != '\0'
++		   && strcmp(value, "0") != 0);
++    }
++    return (enabled != 0);
++}
++
++STATIC void
++panthera_control_prefs_trace(const char *msg)
++{
++    if (!panthera_control_prefs_trace_enabled()) {
++	return;
++    }
++    (void)write(STDERR_FILENO, msg, strlen(msg));
++}
++
++STATIC void
++panthera_control_prefs_tracef(const char *fmt, ...)
++{
++    char buf[256];
++    va_list ap;
++
++    va_start(ap, fmt);
++    (void)vsnprintf(buf, sizeof(buf), fmt, ap);
++    va_end(ap);
++    panthera_control_prefs_trace(buf);
++}
++#endif
++
+ STATIC SCPreferencesRef
+ IPConfigurationControlPrefsGet(void)
+ {
+@@ -190,10 +234,19 @@
+     S_prefs = SCPreferencesCreate(NULL, CFSTR("IPConfigurationControlPrefs"),
+ 				  kIPConfigurationControlPrefsID);
+     if (queue != NULL && callback != NULL) {
++	Boolean callback_ok;
++	Boolean queue_ok = FALSE;
++
+ 	S_callback = callback;
+-	SCPreferencesSetCallback(S_prefs,
+-				 IPConfigurationControlPrefsChanged, NULL);
+-	SCPreferencesSetDispatchQueue(S_prefs, queue);
++	callback_ok = SCPreferencesSetCallback(S_prefs,
++					       IPConfigurationControlPrefsChanged, NULL);
++	if (callback_ok) {
++	    queue_ok = SCPreferencesSetDispatchQueue(S_prefs, queue);
++	}
++#ifdef PANTHERA
++	panthera_control_prefs_tracef("PANTHERA:IPConfiguration control prefs callback=%d queue=%d\n",
++				      callback_ok, queue_ok);
++#endif
+ 	enable_prefs_observer(queue);
+     }
+     return (S_prefs);
+--- bootplib/interfaces.c
++++ bootplib/interfaces.c
+@@ -34,6 +34,12 @@
+ #include <stdio.h>
+ #include <unistd.h>
+ #include <stdlib.h>
++#ifdef PANTHERA
++#include <fcntl.h>
++#include <stdarg.h>
++#include <string.h>
++#include <net/if_mib.h>
++#endif
+ #include <sys/ioctl.h>
+ #include <sys/types.h>
+ #include <strings.h>
+@@ -53,6 +59,39 @@
+ 
+ #define my_log	SC_log
+ 
++#ifdef PANTHERA
++STATIC boolean_t
++panthera_interfaces_trace_enabled(void)
++{
++    static int enabled = -1;
++
++    if (enabled < 0) {
++	const char *value = getenv("PANTHERA_IPCONFIGURATION_TRACE");
++	enabled = (value != NULL && value[0] != '\0'
++		   && strcmp(value, "0") != 0);
++    }
++    return (enabled != 0);
++}
++
++STATIC void
++panthera_interfaces_trace(const char *msg)
++{
++    if (!panthera_interfaces_trace_enabled()) {
++	return;
++    }
++    (void)write(STDERR_FILENO, msg, strlen(msg));
++}
++
++STATIC void
++panthera_interfaces_tracef(const char *fmt, const char *name)
++{
++    char buf[160];
++
++    (void)snprintf(buf, sizeof(buf), fmt, name);
++    panthera_interfaces_trace(buf);
++}
++#endif
++
+ #if !NO_SYSTEMCONFIGURATION
+ #include <SystemConfiguration/SCNetworkConfigurationPrivate.h>
+ #endif /* !NO_SYSTEMCONFIGURATION */
+@@ -133,6 +172,13 @@
+ 					 &flags)) {
+ 	goto done;
+     }
++#ifdef PANTHERA
++    /*
++     * Private IOKit-backed metadata lookup is not bounded;
++     * zero means wired/non-special, not synthetic status.
++     */
++    return (0);
++#endif
+     ifname_cf = CFStringCreateWithCString(NULL, ifname,
+ 					  kCFStringEncodingUTF8);
+     netif = _SCNetworkInterfaceCreateWithBSDName(NULL, ifname_cf, 0);
+@@ -331,10 +377,20 @@
+     boolean_t		success = FALSE;
+ 
+     interfaces->list = NULL;
++#ifdef PANTHERA
++    panthera_interfaces_trace("PANTHERA:interfaces build enter\n");
++    panthera_interfaces_trace("PANTHERA:interfaces getifaddrs enter\n");
++#endif
+     if (getifaddrs(&addrs) < 0) {
+ 	goto done;
+     }
++#ifdef PANTHERA
++    panthera_interfaces_trace("PANTHERA:interfaces getifaddrs returned\n");
++#endif
+     size = count_ifaddrs(addrs);
++#ifdef PANTHERA
++    panthera_interfaces_trace("PANTHERA:interfaces count returned\n");
++#endif
+     if (size == 0) {
+ 	goto done;
+     }
+@@ -344,7 +400,13 @@
+ 	goto done;
+     }
+ 
++#ifdef PANTHERA
++    panthera_interfaces_trace("PANTHERA:interfaces socket enter\n");
++#endif
+     s = socket(AF_INET, SOCK_DGRAM, 0);
++#ifdef PANTHERA
++    panthera_interfaces_trace("PANTHERA:interfaces socket returned\n");
++#endif
+     if (s < 0) {
+ 	goto done;
+     }
+@@ -356,7 +418,10 @@
+ 	if (ifap->ifa_addr == NULL) {
+ 	    continue;
+ 	}
+-	name = ifap->ifa_name;
++		name = ifap->ifa_name;
++#ifdef PANTHERA
++		panthera_interfaces_tracef("PANTHERA:interfaces scan %s\n", name);
++#endif
+ 	switch (ifap->ifa_addr->sa_family) {
+ 	  case AF_INET: {
+ 	      inet_addrinfo_t	info;
+@@ -441,37 +506,308 @@
+ 	      else {
+ 		  entry->type = dl_p->sdl_type;
+ 	      }
+-	      eflags = S_get_eflags(s, name);
++#ifdef PANTHERA
++		      panthera_interfaces_tracef("PANTHERA:interfaces eflags enter %s\n", name);
++#endif
++		      eflags = S_get_eflags(s, name);
++#ifdef PANTHERA
++		      panthera_interfaces_tracef("PANTHERA:interfaces eflags returned %s\n", name);
++#endif
+ 	      if ((eflags & IFEF_AWDL) != 0) {
+ 		  entry->type_flags |= kInterfaceTypeFlagIsAWDL
+ 		      | kInterfaceTypeFlagIsWireless;
+ 	      }
+ 	      entry->is_expensive = (eflags & IFEF_EXPENSIVE) != 0;
++#ifdef PANTHERA
++	      /* Panthera Ethernet driver hangs on SIOCGIFMEDIA; skip query to leave link_status invalid */
++	      if (entry->type != IFT_ETHER && entry->type != IFT_L2VLAN && entry->type != IFT_IEEE8023ADLAG) {
++		  panthera_interfaces_tracef("PANTHERA:interfaces media enter %s\n", name);
++		  if (S_get_ifmediareq(s, name, &ifmr)) {
++		      entry->link_status
++			  = S_ifmediareq_get_link_status(&ifmr);
++		      if (S_ifmediareq_get_is_wireless(&ifmr)) {
++			  entry->type_flags |= kInterfaceTypeFlagIsWireless;
++		      }
++		  }
++		  panthera_interfaces_tracef("PANTHERA:interfaces media returned %s\n", name);
++	      }
++#else
+ 	      if (S_get_ifmediareq(s, name, &ifmr)) {
+ 		  entry->link_status
+ 		      = S_ifmediareq_get_link_status(&ifmr);
+ 		  if (S_ifmediareq_get_is_wireless(&ifmr)) {
+ 		      entry->type_flags |= kInterfaceTypeFlagIsWireless;
+ 		  }
+ 	      }
++#endif
++#ifdef PANTHERA
++		      panthera_interfaces_tracef("PANTHERA:interfaces generation enter %s\n", name);
++#endif
+ 	      entry->generation = S_get_generation(s, name);
++#ifdef PANTHERA
++		      panthera_interfaces_tracef("PANTHERA:interfaces generation returned %s\n", name);
++#endif
+ 	      if (entry->type == IFT_ETHER) {
+ 		  uint8_t	flags;
+ 
++#ifdef PANTHERA
++				  panthera_interfaces_tracef("PANTHERA:interfaces flags enter %s\n", name);
++#endif
+ 		  flags = S_interface_get_flags(old_interfaces,
+ 						name, entry->generation);
++#ifdef PANTHERA
++				  panthera_interfaces_tracef("PANTHERA:interfaces flags returned %s\n", name);
++#endif
+ 		  if (flags != 0) {
+ 		      entry->type_flags |= flags;
+ 		  }
+ 	      }
+ 	      break;
+ 	  }
++	}
++    }
++#ifdef PANTHERA
++    panthera_interfaces_trace("PANTHERA:interfaces fallback enter\n");
++    {
++	int				ifcount = 0;
++	int				mib_count[5];
++	size_t				count_len = sizeof(ifcount);
++
++	mib_count[0] = CTL_NET;
++	mib_count[1] = PF_LINK;
++	mib_count[2] = NETLINK_GENERIC;
++	mib_count[3] = IFMIB_SYSTEM;
++	mib_count[4] = IFMIB_IFCOUNT;
++
++	if (sysctl(mib_count, 5, &ifcount, &count_len, NULL, 0) == 0 && ifcount > 0) {
++	    int i;
++
++	    for (i = 1; i <= ifcount; i++) {
++		int			mib_data[6];
++		struct ifmibdata	ifmd;
++		size_t			ifmd_len = sizeof(ifmd);
++		const char *		name;
++		interface_t *		entry;
++		struct ifreq		ifr;
++		short			flags = 0;
++		int			mib_link[6];
++		size_t			buf_len = 0;
++		char *			buf = NULL;
++		struct if_msghdr *	ifm;
++		struct sockaddr_dl *	dl_p;
++		struct ifreq		ifr_ll;
++		boolean_t		got_link = FALSE;
++		uint8_t			link_addr[MAX_LINK_ADDR_LEN];
++		uint8_t			link_alen = 0;
++		uint8_t			link_type = 0;
++		uint32_t		link_index = (uint32_t)i;
++		uint64_t		eflags;
++		struct ifmediareq	ifmr;
++
++		mib_data[0] = CTL_NET;
++		mib_data[1] = PF_LINK;
++		mib_data[2] = NETLINK_GENERIC;
++		mib_data[3] = IFMIB_IFDATA;
++		mib_data[4] = i;
++		mib_data[5] = IFDATA_GENERAL;
++
++		if (sysctl(mib_data, 6, &ifmd, &ifmd_len, NULL, 0) < 0) {
++		    continue;
++		}
++		if (ifmd_len < sizeof(ifmd)) {
++		    continue;
++		}
++
++		ifmd.ifmd_name[sizeof(ifmd.ifmd_name) - 1] = '\0';
++		name = ifmd.ifmd_name;
++		if (name[0] == '\0') {
++		    continue;
++		}
++
++		/* If already present in the list, keep existing entry primary */
++		if (ifl_find_name(interfaces, name) != NULL) {
++		    continue;
++		}
++
++		panthera_interfaces_tracef("PANTHERA:interfaces fallback scan %s\n", name);
++
++		/* Query flags via SIOCGIFFLAGS */
++		if (s >= 0) {
++		    bzero(&ifr, sizeof(ifr));
++		    strlcpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));
++		    if (ioctl(s, SIOCGIFFLAGS, (caddr_t)&ifr) == 0) {
++			flags = ifr.ifr_flags;
++		    }
++		}
++		if (flags == 0) {
++		    flags = (short)ifmd.ifmd_flags;
++		}
++
++		/* Skip loopback interfaces */
++		if ((flags & IFF_LOOPBACK) != 0 || (ifmd.ifmd_flags & IFF_LOOPBACK) != 0) {
++		    continue;
++		}
++		if (ifmd.ifmd_data.ifi_type == IFT_LOOP) {
++		    continue;
++		}
++
++		link_type = (uint8_t)ifmd.ifmd_data.ifi_type;
++
++		/* Prefer SIOCGIFLLADDR ioctl for MAC address of unaddressed/down interfaces */
++		if (s >= 0) {
++		    bzero(&ifr_ll, sizeof(ifr_ll));
++		    strlcpy(ifr_ll.ifr_name, name, sizeof(ifr_ll.ifr_name));
++		    if (ioctl(s, SIOCGIFLLADDR, (caddr_t)&ifr_ll) == 0) {
++			if (ifr_ll.ifr_addr.sa_family == AF_LINK) {
++			    uint8_t alen = (uint8_t)ifr_ll.ifr_addr.sa_len;
++			    if (alen == 0 && ifmd.ifmd_data.ifi_addrlen > 0) {
++				alen = (uint8_t)ifmd.ifmd_data.ifi_addrlen;
++			    } else if (alen == 0) {
++				alen = 6;
++			    }
++			    if (alen > sizeof(link_addr)) {
++				alen = sizeof(link_addr);
++			    }
++			    link_alen = alen;
++			    bcopy(ifr_ll.ifr_addr.sa_data, link_addr, link_alen);
++			    link_index = (uint32_t)i;
++			    if (ifmd.ifmd_data.ifi_type != 0) {
++				link_type = (uint8_t)ifmd.ifmd_data.ifi_type;
++			    }
++			    got_link = TRUE;
++			}
++		    }
++		}
++
++		/* Query link-layer metadata via NET_RT_IFLIST sysctl as fallback */
++		if (!got_link) {
++		    mib_link[0] = CTL_NET;
++		    mib_link[1] = PF_ROUTE;
++		    mib_link[2] = 0;
++		    mib_link[3] = AF_LINK;
++		    mib_link[4] = NET_RT_IFLIST;
++		    mib_link[5] = i;
++
++		    if (sysctl(mib_link, 6, NULL, &buf_len, NULL, 0) == 0
++			&& buf_len >= (sizeof(struct if_msghdr) + sizeof(struct sockaddr_dl))) {
++			buf = (char *)malloc(buf_len);
++			if (buf != NULL) {
++			    if (sysctl(mib_link, 6, buf, &buf_len, NULL, 0) == 0
++				&& buf_len >= (sizeof(struct if_msghdr) + sizeof(struct sockaddr_dl))) {
++				ifm = (struct if_msghdr *)(void *)buf;
++				if (ifm->ifm_type == RTM_IFINFO) {
++				    dl_p = (struct sockaddr_dl *)(void *)(ifm + 1);
++				    if (dl_p->sdl_family == AF_LINK && dl_p->sdl_alen > 0) {
++					link_alen = (dl_p->sdl_alen > sizeof(link_addr)) ? sizeof(link_addr) : dl_p->sdl_alen;
++					bcopy(dl_p->sdl_data + dl_p->sdl_nlen, link_addr, link_alen);
++					if (dl_p->sdl_type != 0) {
++					    link_type = dl_p->sdl_type;
++					}
++					if (dl_p->sdl_index != 0) {
++					    link_index = dl_p->sdl_index;
++					}
++					if (ifm->ifm_data.ifi_type != 0) {
++					    link_type = ifm->ifm_data.ifi_type;
++					}
++					got_link = TRUE;
++				    }
++				}
++			    }
++			    free(buf);
++			    buf = NULL;
++			}
++		    }
++		}
++
++		/* Skip entry if real MAC or valid index unavailable */
++		if (!got_link || link_alen == 0 || link_index == 0) {
++		    continue;
++		}
++		if (link_type == 0) {
++		    if (ifmd.ifmd_data.ifi_type != 0) {
++			link_type = ifmd.ifmd_data.ifi_type;
++		    } else {
++			link_type = IFT_ETHER;
++		    }
++		}
++
++		/* Ensure capacity in interfaces->list without discarding prior allocations on failure */
++		if (interfaces->list == NULL || interfaces->count >= interfaces->size) {
++		    int		new_size = (interfaces->size > 0) ? (interfaces->size * 2) : 4;
++		    interface_t * new_list;
++
++		    new_list = (interface_t *)realloc(interfaces->list,
++						       sizeof(interface_t) * new_size);
++		    if (new_list == NULL) {
++			break;
++		    }
++		    interfaces->list = new_list;
++		    interfaces->size = new_size;
++		}
++
++		entry = S_next_entry(interfaces, name);
++		if (entry == NULL) {
++		    continue;
++		}
++
++		entry->flags = (uint16_t)flags;
++		entry->link_address.length = link_alen;
++		bcopy(link_addr, entry->link_address.addr, entry->link_address.length);
++		entry->link_address.type = link_type;
++		entry->link_address.index = (uint16_t)link_index;
++		entry->type = link_type;
++
++		panthera_interfaces_tracef("PANTHERA:interfaces fallback added %s\n", name);
++
++		panthera_interfaces_tracef("PANTHERA:interfaces eflags enter %s\n", name);
++		eflags = S_get_eflags(s, name);
++		panthera_interfaces_tracef("PANTHERA:interfaces eflags returned %s\n", name);
++		if ((eflags & IFEF_AWDL) != 0) {
++		    entry->type_flags |= kInterfaceTypeFlagIsAWDL
++			| kInterfaceTypeFlagIsWireless;
++		}
++		entry->is_expensive = (eflags & IFEF_EXPENSIVE) != 0;
++
++		/* Panthera Ethernet driver hangs on SIOCGIFMEDIA; skip query to leave link_status invalid */
++		if (entry->type != IFT_ETHER && entry->type != IFT_L2VLAN && entry->type != IFT_IEEE8023ADLAG) {
++		    panthera_interfaces_tracef("PANTHERA:interfaces media enter %s\n", name);
++		    if (S_get_ifmediareq(s, name, &ifmr)) {
++			entry->link_status
++			    = S_ifmediareq_get_link_status(&ifmr);
++			if (S_ifmediareq_get_is_wireless(&ifmr)) {
++			    entry->type_flags |= kInterfaceTypeFlagIsWireless;
++			}
++		    }
++		    panthera_interfaces_tracef("PANTHERA:interfaces media returned %s\n", name);
++		}
++
++		panthera_interfaces_tracef("PANTHERA:interfaces generation enter %s\n", name);
++		entry->generation = S_get_generation(s, name);
++		panthera_interfaces_tracef("PANTHERA:interfaces generation returned %s\n", name);
++
++		if (entry->type == IFT_ETHER) {
++		    uint8_t	if_flags_val;
++
++		    panthera_interfaces_tracef("PANTHERA:interfaces flags enter %s\n", name);
++		    if_flags_val = S_interface_get_flags(old_interfaces,
++							name, entry->generation);
++		    panthera_interfaces_tracef("PANTHERA:interfaces flags returned %s\n", name);
++		    if (if_flags_val != 0) {
++			entry->type_flags |= if_flags_val;
++		    }
++		}
++	    }
+ 	}
+     }
++    panthera_interfaces_trace("PANTHERA:interfaces fallback returned\n");
++#endif
+     /* make it the "right" size (plus 1 more in case it's 0) */
+     interfaces->list = (interface_t *)
+ 	reallocf(interfaces->list,
+ 		 sizeof(*(interfaces->list)) * (interfaces->count + 1));
++#ifdef PANTHERA
++    panthera_interfaces_trace("PANTHERA:interfaces realloc returned\n");
++#endif
+     success = TRUE;
+ 
+  done:
+@@ -487,6 +823,9 @@
+     if (s >= 0) {
+ 	close(s);
+     }
++#ifdef PANTHERA
++    panthera_interfaces_trace("PANTHERA:interfaces build returned\n");
++#endif
+     return (success);
+ }
+ 
+@@ -603,7 +942,13 @@
+ PRIVATE_EXTERN interface_list_t *
+ ifl_create(interface_list_t * old_list)
+ {
++#ifdef PANTHERA
++    panthera_interfaces_trace("PANTHERA:interfaces ifl_create enter\n");
++#endif
+     interface_list_t * list_p = (interface_list_t *)malloc(sizeof(*list_p));
++#ifdef PANTHERA
++    panthera_interfaces_trace("PANTHERA:interfaces ifl_create malloc returned\n");
++#endif
+     if (list_p == NULL
+ 	|| S_build_interface_list(list_p, old_list) == FALSE) {
+ 	if (list_p != NULL) {
+@@ -611,6 +956,9 @@
+ 	}
+ 	return (NULL);
+     }
++#ifdef PANTHERA
++    panthera_interfaces_trace("PANTHERA:interfaces ifl_create returned\n");
++#endif
+     return (list_p);
+ }
+ 
+@@ -1096,6 +1444,21 @@
+     if (s >= 0) {
+ 	uint64_t	eflags;
+ 
++#ifdef PANTHERA
++	/* Panthera Ethernet driver hangs on SIOCGIFMEDIA; skip query to leave link_status invalid */
++	if (if_p->type != IFT_ETHER && if_p->type != IFT_L2VLAN && if_p->type != IFT_IEEE8023ADLAG) {
++	    panthera_interfaces_tracef("PANTHERA:interfaces media enter %s\n", if_name(if_p));
++	    if (S_get_ifmediareq(s, if_name(if_p), &ifmr) == FALSE) {
++		my_log(log_level_for_errno(errno),
++		       "%s: failed to get media status, %s",
++		       if_name(if_p), strerror(errno));
++	    }
++	    else {
++		if_p->link_status = S_ifmediareq_get_link_status(&ifmr);
++	    }
++	    panthera_interfaces_tracef("PANTHERA:interfaces media returned %s\n", if_name(if_p));
++	}
++#else
+ 	if (S_get_ifmediareq(s, if_name(if_p), &ifmr) == FALSE) {
+ 	    my_log(log_level_for_errno(errno),
+ 		   "%s: failed to get media status, %s",
+@@ -1104,6 +1467,7 @@
+ 	else {
+ 	    if_p->link_status = S_ifmediareq_get_link_status(&ifmr);
+ 	}
++#endif
+ 	eflags = S_get_eflags(s, if_name(if_p));
+ 	if_p->is_expensive = (eflags & IFEF_EXPENSIVE) != 0;
+ 	close(s);
+--- bootplib/udp_transmit.c
++++ bootplib/udp_transmit.c
+@@ -39,6 +39,9 @@
+ #include <unistd.h>
+ #include <string.h>
+ #include <stdio.h>
++#ifdef PANTHERA
++#include <stdarg.h>
++#endif
+ #include <sys/types.h>
+ #include <sys/errno.h>
+ #include <sys/socket.h>
+@@ -59,6 +62,51 @@
+ #include "bpflib.h"
+ #include "in_cksum.h"
+ 
++#ifdef PANTHERA
++static int
++panthera_udp_trace_enabled(void)
++{
++    static int enabled = -1;
++
++    if (enabled < 0) {
++	const char *value = getenv("PANTHERA_IPCONFIGURATION_TRACE");
++	enabled = (value != NULL && value[0] != '\0' && strcmp(value, "0") != 0);
++    }
++    return (enabled != 0);
++}
++
++static void
++panthera_udp_trace(const char *message)
++{
++    if (!panthera_udp_trace_enabled()) {
++	return;
++    }
++    (void)write(STDERR_FILENO, message, strlen(message));
++}
++
++static void
++panthera_udp_tracef(const char *fmt, ...)
++{
++    char buffer[256];
++    va_list ap;
++    int len;
++
++    if (!panthera_udp_trace_enabled()) {
++	return;
++    }
++    va_start(ap, fmt);
++    len = vsnprintf(buffer, sizeof(buffer), fmt, ap);
++    va_end(ap);
++    if (len <= 0) {
++	return;
++    }
++    if ((size_t)len >= sizeof(buffer)) {
++	len = (int)sizeof(buffer) - 1;
++    }
++    (void)write(STDERR_FILENO, buffer, (size_t)len);
++}
++#endif
++
+ typedef struct {
+     struct ip 		ip;
+     struct udphdr 	udp;
+@@ -78,19 +126,33 @@
+ {
+     int bpf_fd;
+ 
++#ifdef PANTHERA
++    panthera_udp_tracef("PANTHERA:BPF open enter if=%s\n", if_name);
++#endif
+     bpf_fd = bpf_new();
++#ifdef PANTHERA
++    panthera_udp_tracef("PANTHERA:BPF open returned fd=%d errno=%d\n",
++			bpf_fd, errno);
++#endif
+     if (bpf_fd < 0) {
+ 	/* BPF transmit unavailable */
+ 	IPConfigLog(LOG_ERR, "Transmitter: bpf_fd() failed, %s (%d)",
+ 		    strerror(errno), errno);
+     }
+     else if (bpf_filter_receive_none(bpf_fd) < 0) {
++#ifdef PANTHERA
++	panthera_udp_tracef("PANTHERA:BPF filter failed errno=%d\n", errno);
++#endif
+ 	IPConfigLog(LOG_ERR,  "Transmitter: failed to set filter, %s (%d)",
+ 		    strerror(errno), errno);
+ 	bpf_dispose(bpf_fd);
+ 	bpf_fd = -1;
+     }
+     else if (bpf_setif(bpf_fd, if_name) < 0) {
++#ifdef PANTHERA
++	panthera_udp_tracef("PANTHERA:BPF setif failed if=%s errno=%d\n",
++			    if_name, errno);
++#endif
+ 	if (errno != ENXIO) {
+ 	    IPConfigLog(LOG_ERR, "Transmitter: bpf_setif(%s) failed: %s (%d)",
+ 			if_name,
+@@ -99,6 +161,22 @@
+ 	bpf_dispose(bpf_fd);
+ 	bpf_fd = -1;
+     }
++    else if (bpf_set_hdrcmplt(bpf_fd, 1) < 0) {
++#ifdef PANTHERA
++	panthera_udp_tracef("PANTHERA:BPF hdrcmplt failed if=%s errno=%d\n",
++			    if_name, errno);
++#endif
++	IPConfigLog(LOG_ERR, "Transmitter: BIOCSHDRCMPLT(%s) failed: %s (%d)",
++		    if_name, strerror(errno), errno);
++	bpf_dispose(bpf_fd);
++	bpf_fd = -1;
++    }
++#ifdef PANTHERA
++    else {
++	panthera_udp_tracef("PANTHERA:BPF setif ok hdrcmplt=1 if=%s fd=%d\n",
++			    if_name, bpf_fd);
++    }
++#endif
+ 
+     return (bpf_fd);
+ }
+@@ -211,6 +289,10 @@
+ 	    ip_udp->ip.ip_sum = in_cksum(&ip_udp->ip, sizeof(ip_udp->ip));
+ 	    
+ 	    status = bpf_write(bpf_fd, sendbuf, frame_length);
++#ifdef PANTHERA
++	    panthera_udp_tracef("PANTHERA:BPF write returned status=%d errno=%d\n",
++				status, errno);
++#endif
+ 	    if (status < 0) {
+ 		IPConfigLogFL(LOG_ERR, 
+ 			      "bpf_write(%s) failed: %s (%d)",
+@@ -222,14 +304,25 @@
+ 	struct sockaddr_in 	dst;
+ 	ssize_t			send_status;
+ 
++#ifdef PANTHERA
++	panthera_udp_tracef("PANTHERA:UDP socket send enter fd=%d len=%d\n",
++			    sockfd, len);
++#endif
+ 	bzero(&dst, sizeof(dst));
+ 	dst.sin_len = sizeof(struct sockaddr_in);
+ 	dst.sin_family = AF_INET;
+ 	dst.sin_port = htons(dest_port);
+ 	dst.sin_addr = dest_ip;
++#ifdef PANTHERA
++	panthera_udp_trace("PANTHERA:UDP socket send using sendto\n");
++#endif
+ 	send_status = sendto(sockfd, data, len, 0,
+-			     (struct sockaddr *)&dst, 
++			     (struct sockaddr *)&dst,
+ 			     sizeof(struct sockaddr_in));
++#ifdef PANTHERA
++	panthera_udp_tracef("PANTHERA:UDP socket send returned status=%ld errno=%d\n",
++			    (long)send_status, errno);
++#endif
+ 	if (send_status < len)
+ 	    status = -1;
+ 

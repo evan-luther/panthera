@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PANTHERA_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+SDKROOT="${PANTHERA_SDKROOT:-${PANTHERA_ROOT}/userland/panthera_sdk/Panthera.sdk}"
+CC_BIN="${PANTHERA_HOST_CC:-${CC:-$(xcrun -find clang)}}"
+TARGET="${PANTHERA_TARGET:-x86_64-apple-darwin23.0}"
+MINVER="${PANTHERA_MINVER:-14.0}"
+
+if [[ ! -d "${SDKROOT}/usr/include" || ! -d "${SDKROOT}/usr/lib" ]]; then
+  echo "Panthera SDK is missing or incomplete: ${SDKROOT}" >&2
+  echo "Run: userland/panthera_sdk/build_panthera_sdk.sh" >&2
+  exit 1
+fi
+
+linking=1
+for arg in "$@"; do
+  case "${arg}" in
+    -c|-S|-E|-M|-MM|-fsyntax-only)
+      linking=0
+      ;;
+    -nostdlib|-nodefaultlibs)
+      linking=0
+      ;;
+  esac
+done
+
+args=(
+  -target "${TARGET}"
+  -mmacosx-version-min="${MINVER}"
+  -isysroot "${SDKROOT}"
+  -Wno-incompatible-sysroot
+  -iframework "${SDKROOT}/System/Library/Frameworks"
+)
+
+if [[ "${linking}" == "1" ]]; then
+  args+=(
+    -L"${SDKROOT}/usr/lib"
+    -L"${SDKROOT}/usr/lib/system"
+  )
+fi
+
+exec "${CC_BIN}" "${args[@]}" "$@"

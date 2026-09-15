@@ -1,0 +1,53 @@
+diff --git a/module/os/macos/zfs/zfs_vnops_osx.c b/module/os/macos/zfs/zfs_vnops_osx.c
+index 621ca7d..6e41c73 100644
+--- a/module/os/macos/zfs/zfs_vnops_osx.c
++++ b/module/os/macos/zfs/zfs_vnops_osx.c
+@@ -76,7 +76,8 @@
+ #include <TargetConditionals.h>
+ #include <AvailabilityMacros.h>
+ 
+ #ifdef _KERNEL
++#include <pexpert/pexpert.h>
+ #include <sys/sysctl.h>
+ #include <sys/hfs_internal.h>
+ unsigned int zfs_vnop_ignore_negatives = 0;
+@@ -5248,5 +5249,28 @@ zfs_getextattr_dir(struct vnop_getxattr_args *ap, vnode_t xvp, znode_t *xdzp,
+  * Maybe these should live in vfsops
+  */
++static boolean_t
++zfs_vfsops_mountroot_requested(void)
++{
++	char root_arg[MAXPATHLEN];
++
++	if (PE_parse_boot_argn("zfs_boot", root_arg, sizeof (root_arg)) &&
++	    root_arg[0] != '\0') {
++		return (B_TRUE);
++	}
++
++	if (PE_parse_boot_argn("rd", root_arg, sizeof (root_arg)) &&
++	    strncmp(root_arg, "zfs:", 4) == 0) {
++		return (B_TRUE);
++	}
++
++	if (PE_parse_boot_argn("rootdev", root_arg, sizeof (root_arg)) &&
++	    strncmp(root_arg, "zfs:", 4) == 0) {
++		return (B_TRUE);
++	}
++
++	return (B_FALSE);
++}
++
+ int
+ zfs_vfsops_init(void)
+ {
+@@ -5279,7 +5302,9 @@ zfs_vfsops_init(void)
+ #endif
+ 
+ #ifdef VFS_TBLCANMOUNTROOT  // From 10.12
+-	vfe.vfe_flags |= VFS_TBLCANMOUNTROOT;
++	if (zfs_vfsops_mountroot_requested()) {
++		vfe.vfe_flags |= VFS_TBLCANMOUNTROOT;
++	}
+ #endif
+ 
+ 	vfe.vfe_reserv[0] = 0;

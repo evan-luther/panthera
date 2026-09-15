@@ -1,0 +1,5 @@
+# Distinct strong markers for panthera-cfurl-file-read.patch
+# Format: <relative_path_in_CF_SRC>:<marker_string>
+# Both the helper definition and the call branch must be present for a complete state.
+CFURLAccess.c:static CFDataRef _CFFileURLPantheraCreateData(CFAllocatorRef alloc, CFURLRef url)
+CFURLAccess.c:*fetchedData = _CFFileURLPantheraCreateData(alloc, url);

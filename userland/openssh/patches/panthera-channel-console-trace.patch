@@ -1,0 +1,202 @@
+--- channels.c	2024-03-11 01:20:49	2026-05-17 21:06:50
++++ channels.c	2026-05-17 23:30:00	2026-05-17 21:06:50
+@@ -107,6 +107,30 @@
+ /* Per-channel callback for pre/post IO actions */
+ typedef void chan_fn(struct ssh *, Channel *c);
+ 
++#ifdef PANTHERA
++static void
++panthera_channel_tracef(const char *fmt, ...)
++{
++	char buf[256];
++	va_list ap;
++	int fd;
++
++	va_start(ap, fmt);
++	(void)vsnprintf(buf, sizeof(buf), fmt, ap);
++	va_end(ap);
++	buf[sizeof(buf) - 1] = '\0';
++
++	fd = open("/dev/console", O_WRONLY | O_NONBLOCK);
++	if (fd >= 0) {
++		(void)write(fd, buf, strlen(buf));
++		(void)write(fd, "\n", 1);
++		(void)close(fd);
++	}
++}
++#else
++#define panthera_channel_tracef(...) do { } while (0)
++#endif
++
+ /*
+  * Data structure for storing which hosts are permitted for forward requests.
+  * The local sides of any remote forwards are stored in this array to prevent
+@@ -2122,20 +2146,33 @@
+ 
+ 	force = c->isatty && c->detach_close && c->istate != CHAN_INPUT_CLOSED;
+ 
+-	if (!force && (c->io_ready & SSH_CHAN_IO_RFD) == 0)
++	if (!force && (c->io_ready & SSH_CHAN_IO_RFD) == 0) {
++		panthera_channel_tracef("PANTHERA:channel rfd skip id=%d type=%d rfd=%d io_ready=0x%x io_want=0x%x",
++		    c->self, c->type, c->rfd, c->io_ready, c->io_want);
+ 		return 1;
+-	if ((avail = sshbuf_avail(c->input)) == 0)
++	}
++	if ((avail = sshbuf_avail(c->input)) == 0) {
++		panthera_channel_tracef("PANTHERA:channel rfd no-avail id=%d type=%d rfd=%d ilen=%zu",
++		    c->self, c->type, c->rfd, sshbuf_len(c->input));
+ 		return 1; /* Shouldn't happen */
++	}
+ 
+ 	/*
+ 	 * For "simple" channels (i.e. not datagram or filtered), we can
+ 	 * read directly to the channel buffer.
+ 	 */
+ 	if (!pty_zeroread && c->input_filter == NULL && !c->datagram) {
++		panthera_channel_tracef("PANTHERA:channel rfd simple before id=%d type=%d rfd=%d io_ready=0x%x ilen=%zu avail=%zu rwin=%u maxpkt=%u",
++		    c->self, c->type, c->rfd, c->io_ready,
++		    sshbuf_len(c->input), avail, c->remote_window,
++		    c->remote_maxpacket);
+ 		/* Only OPEN channels have valid rwin */
+ 		if (c->type == SSH_CHANNEL_OPEN) {
+-			if ((have = sshbuf_len(c->input)) >= c->remote_window)
++			if ((have = sshbuf_len(c->input)) >= c->remote_window) {
++				panthera_channel_tracef("PANTHERA:channel rfd simple blocked-window id=%d have=%zu rwin=%u",
++				    c->self, have, c->remote_window);
+ 				return 1; /* shouldn't happen */
++			}
+ 			if (maxlen > c->remote_window - have)
+ 				maxlen = c->remote_window - have;
+ 		}
+@@ -2143,17 +2180,26 @@
+ 			maxlen = avail;
+ 		if ((r = sshbuf_read(c->rfd, c->input, maxlen, &nr)) != 0) {
+ 			if (errno == EINTR || (!force &&
+-			    (errno == EAGAIN || errno == EWOULDBLOCK)))
++			    (errno == EAGAIN || errno == EWOULDBLOCK))) {
++				panthera_channel_tracef("PANTHERA:channel rfd simple retry id=%d r=%d errno=%d nr=%zu maxlen=%zu",
++				    c->self, r, errno, nr, maxlen);
+ 				return 1;
++			}
+ 			debug2("channel %d: read failed rfd %d maxlen %zu: %s",
+ 			    c->self, c->rfd, maxlen, ssh_err(r));
++			panthera_channel_tracef("PANTHERA:channel rfd simple fail id=%d r=%d errno=%d nr=%zu maxlen=%zu",
++			    c->self, r, errno, nr, maxlen);
+ 			goto rfail;
+ 		}
++		panthera_channel_tracef("PANTHERA:channel rfd simple after id=%d r=%d errno=%d nr=%zu ilen=%zu",
++		    c->self, r, errno, nr, sshbuf_len(c->input));
+ 		if (nr != 0)
+ 			channel_set_used_time(ssh, c);
+ 		return 1;
+ 	}
+ 
++	panthera_channel_tracef("PANTHERA:channel rfd read before id=%d type=%d rfd=%d io_ready=0x%x",
++	    c->self, c->type, c->rfd, c->io_ready);
+ 	errno = 0;
+ 	len = read(c->rfd, buf, sizeof(buf));
+ 	/* fixup AIX zero-length read with errno set to look more like errors */
+@@ -2389,10 +2435,17 @@
+ static void
+ channel_post_open(struct ssh *ssh, Channel *c)
+ {
++	panthera_channel_tracef("PANTHERA:channel post_open before id=%d type=%d rfd=%d wfd=%d efd=%d io_ready=0x%x io_want=0x%x ilen=%zu olen=%zu elen=%zu istate=%d flags=0x%x",
++	    c->self, c->type, c->rfd, c->wfd, c->efd, c->io_ready,
++	    c->io_want, sshbuf_len(c->input), sshbuf_len(c->output),
++	    sshbuf_len(c->extended), c->istate, c->flags);
+ 	channel_handle_rfd(ssh, c);
+ 	channel_handle_wfd(ssh, c);
+ 	channel_handle_efd(ssh, c);
+ 	channel_check_window(ssh, c);
++	panthera_channel_tracef("PANTHERA:channel post_open after id=%d io_ready=0x%x ilen=%zu olen=%zu elen=%zu istate=%d flags=0x%x",
++	    c->self, c->io_ready, sshbuf_len(c->input), sshbuf_len(c->output),
++	    sshbuf_len(c->extended), c->istate, c->flags);
+ }
+ 
+ static u_int
+@@ -2846,6 +2899,9 @@
+ 		return;
+ 	if (p == -1 || (u_int)p >= npfd)
+ 		fatal_f("channel %d: bad pfd %d (max %u)", c->self, p, npfd);
++	if (pfd->revents != 0)
++		panthera_channel_tracef("PANTHERA:channel fd_ready id=%d type=%d what=%s fd=%d p=%d ev=0x%x rev=0x%x mask=0x%x ready=0x%x io_want=0x%x io_ready=0x%x",
++		    c->self, c->type, what, fd, p, pfd->events, pfd->revents, revents_mask, ready, c->io_want, c->io_ready);
+ 	dump_channel_poll(__func__, what, c, p, pfd);
+ 	if (pfd->fd != fd) {
+ 		fatal("channel %d: inconsistent %s fd=%d pollfd[%u].fd %d "
+@@ -2856,8 +2912,11 @@
+ 		fatal("channel %d: invalid %s pollfd[%u].fd %d r%d w%d e%d s%d",
+ 		    c->self, what, p, pfd->fd, c->rfd, c->wfd, c->efd, c->sock);
+ 	}
+-	if ((pfd->revents & (revents_mask|POLLHUP|POLLERR)) != 0)
++	if ((pfd->revents & (revents_mask|POLLHUP|POLLERR)) != 0) {
+ 		c->io_ready |= ready & c->io_want;
++		panthera_channel_tracef("PANTHERA:channel fd_ready set id=%d what=%s io_ready=0x%x",
++		    c->self, what, c->io_ready);
++	}
+ }
+ 
+ /*
+@@ -2872,6 +2931,11 @@
+ 	int p;
+ 	Channel *c;
+ 
++	for (p = 0; p < (int)npfd; p++) {
++		if (pfd[p].revents != 0)
++			panthera_channel_tracef("PANTHERA:channel after_poll pfd=%d fd=%d ev=0x%x rev=0x%x",
++			    p, pfd[p].fd, pfd[p].events, pfd[p].revents);
++	}
+ #ifdef DEBUG_CHANNEL_POLL
+ 	for (p = 0; p < (int)npfd; p++) {
+ 		if (pfd[p].revents == 0)
+@@ -2942,7 +3006,9 @@
+ 			dump_channel_poll(__func__, "sock", c, p, pfd);
+ 		}
+ 	}
++	panthera_channel_tracef("PANTHERA:channel after_poll before-post");
+ 	channel_handler(ssh, CHAN_POST, NULL);
++	panthera_channel_tracef("PANTHERA:channel after_poll after-post");
+ }
+ 
+ /*
+@@ -2956,6 +3022,8 @@
+ 	const u_char *pkt;
+ 	int r;
+ 
++	panthera_channel_tracef("PANTHERA:channel output_input_open enter id=%d ilen=%zu istate=%d flags=0x%x rwin=%u maxpkt=%u have_remote=%d",
++	    c->self, sshbuf_len(c->input), c->istate, c->flags, c->remote_window, c->remote_maxpacket, c->have_remote_id);
+ 	if ((len = sshbuf_len(c->input)) == 0) {
+ 		if (c->istate == CHAN_INPUT_WAIT_DRAIN) {
+ 			/*
+@@ -3013,9 +3081,13 @@
+ 	    (r = sshpkt_put_string(ssh, sshbuf_ptr(c->input), len)) != 0 ||
+ 	    (r = sshpkt_send(ssh)) != 0)
+ 		fatal_fr(r, "channel %i: send data", c->self);
++	panthera_channel_tracef("PANTHERA:channel output_input_open sent id=%d len=%zu before_consume=%zu rwin=%u",
++	    c->self, len, sshbuf_len(c->input), c->remote_window);
+ 	if ((r = sshbuf_consume(c->input, len)) != 0)
+ 		fatal_fr(r, "channel %i: consume", c->self);
+ 	c->remote_window -= len;
++	panthera_channel_tracef("PANTHERA:channel output_input_open leave id=%d ilen=%zu rwin=%u",
++	    c->self, sshbuf_len(c->input), c->remote_window);
+ 	return 1;
+ }
+ 
+@@ -3086,6 +3158,8 @@
+ 		}
+ 
+ 		/* Get the amount of buffered data for this channel. */
++		panthera_channel_tracef("PANTHERA:channel output_poll channel id=%d ilen=%zu elen=%zu istate=%d flags=0x%x",
++		    c->self, sshbuf_len(c->input), sshbuf_len(c->extended), c->istate, c->flags);
+ 		if (c->istate == CHAN_INPUT_OPEN ||
+ 		    c->istate == CHAN_INPUT_WAIT_DRAIN)
+ 			ret |= channel_output_poll_input_open(ssh, c);
+@@ -3094,6 +3168,8 @@
+ 		    c->extended_usage == CHAN_EXTENDED_READ)
+ 			ret |= channel_output_poll_extended_read(ssh, c);
+ 	}
++	if (ret != 0)
++		panthera_channel_tracef("PANTHERA:channel output_poll ret=%d", ret);
+ 	return ret;
+ }
+ 

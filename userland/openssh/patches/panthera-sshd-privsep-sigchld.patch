@@ -1,0 +1,49 @@
+--- sshd.c.orig
++++ sshd.c
+@@ -470,6 +470,7 @@
+ 	int status, r;
+ 	pid_t pid;
+ 	struct ssh_sandbox *box = NULL;
++	sigset_t chldset, oldset;
+ 
+ 	/* Set up unprivileged child process to deal with network data */
+ 	pmonitor = monitor_init();
+@@ -478,6 +479,17 @@
+ 
+ 	if (use_privsep == PRIVSEP_ON)
+ 		box = ssh_sandbox_init(pmonitor);
++
++	/*
++	 * The preauth monitor must be the process that reaps the network
++	 * child. Reassert the expected post-accept SIGCHLD state before
++	 * forking, and keep SIGCHLD blocked until waitpid() is armed.
++	 */
++	ssh_signal(SIGCHLD, SIG_DFL);
++	sigemptyset(&chldset);
++	sigaddset(&chldset, SIGCHLD);
++	sigprocmask(SIG_BLOCK, &chldset, &oldset);
++	sigdelset(&oldset, SIGCHLD);
+ 	pid = fork();
+ 	if (pid == -1) {
+ 		fatal("fork of unprivileged child failed");
+@@ -503,6 +514,7 @@
+ 			if (errno == EINTR)
+ 				continue;
+ 			pmonitor->m_pid = -1;
++			sigprocmask(SIG_SETMASK, &oldset, NULL);
+ 			fatal_f("waitpid: %s", strerror(errno));
+ 		}
+ 		privsep_is_preauth = 0;
+@@ -514,10 +526,12 @@
+ 			    WTERMSIG(status));
+ 		if (box != NULL)
+ 			ssh_sandbox_parent_finish(box);
++		sigprocmask(SIG_SETMASK, &oldset, NULL);
+ 		return 1;
+ 	} else {
+ 		/* child */
+ 		close(pmonitor->m_sendfd);
++		sigprocmask(SIG_SETMASK, &oldset, NULL);
+ 		close(pmonitor->m_log_recvfd);
+ 
+ 		/* Arrange for logging to be sent to the monitor */

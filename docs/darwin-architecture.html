@@ -1,0 +1,1608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Darwin Architecture — Full Stack vs Panthera</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, 'SF Mono', 'Helvetica Neue', Arial, sans-serif; background: #0a0a0c; color: #d0d0d0; padding: 24px; line-height: 1.5; }
+  h1 { font-size: 28px; font-weight: 600; margin-bottom: 8px; color: #eee; }
+  .subtitle { color: #777; font-size: 15px; margin-bottom: 24px; }
+
+  /* --- Tab navigation --- */
+  .tab-bar { display: flex; gap: 2px; margin-bottom: 24px; border-bottom: 1px solid #222; }
+  .tab-btn { padding: 10px 24px; font-size: 14px; font-weight: 600; background: transparent; border: none; color: #666; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.15s; }
+  .tab-btn:hover { color: #aaa; }
+  .tab-btn.active { color: #ddd; border-bottom-color: #888; }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* --- Legend --- */
+  .legend { display: flex; gap: 20px; margin-bottom: 28px; flex-wrap: wrap; }
+  .legend-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #999; }
+  .legend-swatch { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
+
+  /* --- Columns layout --- */
+  .columns { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; max-width: 1600px; }
+  @media (max-width: 1100px) { .columns { grid-template-columns: 1fr; } }
+  .column-header { font-size: 20px; font-weight: 600; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 2px solid #222; }
+
+  /* --- Layers / chips --- */
+  .layer { margin-bottom: 14px; border-radius: 8px; overflow: hidden; }
+  .layer-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; padding: 8px 14px; }
+  .layer-body { padding: 10px 14px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 5px; font-size: 12px; font-weight: 500; border: 1px solid transparent; white-space: nowrap; }
+  .chip .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .sublabel { font-size: 11px; color: #666; font-style: italic; display: block; padding: 2px 14px 4px; }
+
+  /* --- Monochrome-first palette --- */
+  /* Darwin reference (left) */
+  .darwin .layer { background: #101012; border: 1px solid #1e1e22; }
+  .darwin .layer-title { background: #141416; color: #999; }
+  .darwin .chip { background: #141418; border-color: #242428; color: #b0b0b8; }
+  .chip.darwin-std { color: #b0b0b8; }
+  .chip.darwin-std .dot { background: #707080; }
+
+  /* Panthera (right) */
+  .panthera .layer { background: #101012; border: 1px solid #1a1e1c; }
+  .panthera .layer-title { background: #121414; color: #8ab870; }
+
+  /* Status: built = bright white/green accent */
+  .chip.built { background: #141816; border-color: #223326; color: #a8c89a; }
+  .chip.built .dot { background: #7cb868; }
+
+  /* Status: partial = muted warm */
+  .chip.partial { background: #181614; border-color: #2e2a22; color: #b8a878; }
+  .chip.partial .dot { background: #a09060; }
+
+  /* Status: stub = dim */
+  .chip.stub { background: #161416; border-color: #282428; color: #9088a0; }
+  .chip.stub .dot { background: #706888; }
+
+  /* Status: missing = dark grey — CLICKABLE */
+  .chip.missing { background: #121212; border-color: #222; color: #555; cursor: pointer; transition: all 0.15s; }
+  .chip.missing .dot { background: #444; }
+  .chip.missing:hover { border-color: #444; color: #888; background: #181818; }
+  .chip.missing:hover .dot { background: #666; }
+
+  /* --- Arrow / note / divider --- */
+  .arrow-section { text-align: center; padding: 8px 0; color: #444; font-size: 20px; letter-spacing: 4px; }
+  .note { font-size: 12px; color: #666; padding: 6px 14px; background: #0c0c0e; border-radius: 0 0 8px 8px; border-top: 1px dashed #1a1a1a; }
+  .section-divider { border: none; border-top: 1px solid #1a1a1a; margin: 20px 0; }
+
+  .ipc-row { display: flex; align-items: center; gap: 8px; padding: 4px 14px; }
+  .ipc-arrow { color: #444; font-size: 14px; }
+  .group-label { font-size: 11px; font-weight: 700; color: #555; text-transform: uppercase; letter-spacing: 0.8px; padding: 6px 14px 2px; }
+
+  /* --- Tooltips --- */
+  .tooltip { position: relative; cursor: help; }
+  .tooltip:hover::after { content: attr(data-tip); position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); background: #1e1e22; color: #ccc; padding: 6px 10px; border-radius: 4px; font-size: 11px; white-space: nowrap; z-index: 10; pointer-events: none; max-width: 400px; white-space: normal; border: 1px solid #333; }
+
+  /* --- Boot flow --- */
+  .boot-flow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 14px 10px; }
+  .boot-step { padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .boot-arrow { color: #444; font-size: 12px; }
+
+  /* ============================================= */
+  /* ARCHITECTURAL DIAGRAM VIEW                    */
+  /* ============================================= */
+  .arch-diagram { max-width: 1200px; margin: 0 auto; }
+
+  .arch-row { display: flex; align-items: stretch; justify-content: center; gap: 12px; margin-bottom: 4px; flex-wrap: wrap; }
+  .arch-connector { display: flex; justify-content: center; align-items: center; padding: 4px 0; }
+  .arch-connector .vline { width: 2px; height: 24px; background: #333; }
+  .arch-connector-wide { display: flex; justify-content: center; gap: 60px; padding: 4px 0; }
+  .arch-connector-wide .vline { width: 2px; height: 24px; background: #333; }
+
+  .arch-box { border: 1px solid #2a2a2e; border-radius: 6px; padding: 10px 16px; text-align: center; font-size: 12px; font-weight: 600; min-width: 120px; position: relative; }
+  .arch-box .arch-sub { font-size: 10px; font-weight: 400; color: #666; margin-top: 3px; }
+  .arch-box.b-built { border-color: #2a3e28; color: #a8c89a; background: #0e1210; }
+  .arch-box.b-partial { border-color: #2e2a1e; color: #b8a878; background: #12100e; }
+  .arch-box.b-missing { border-color: #222; color: #555; background: #0e0e0e; cursor: pointer; transition: all 0.15s; }
+  .arch-box.b-missing:hover { border-color: #444; color: #888; background: #141414; }
+  .arch-box.b-ref { border-color: #222; color: #888; background: #0e0e10; }
+  .arch-box.b-stub { border-color: #242028; color: #9088a0; background: #100e12; }
+
+  .arch-wide { min-width: 280px; }
+  .arch-full { min-width: 600px; flex: 1; }
+  .arch-label { font-size: 11px; color: #555; text-align: center; padding: 8px 0 4px; text-transform: uppercase; letter-spacing: 1px; font-weight: 700; }
+  .arch-bracket { display: flex; align-items: center; gap: 8px; }
+  .arch-bracket-line { flex: 1; height: 1px; background: #2a2a2e; }
+  .arch-bracket-text { font-size: 10px; color: #555; white-space: nowrap; text-transform: uppercase; letter-spacing: 0.5px; }
+
+  /* --- Prompt modal --- */
+  .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 100; justify-content: center; align-items: center; }
+  .modal-overlay.show { display: flex; }
+  .modal { background: #141416; border: 1px solid #2a2a2e; border-radius: 10px; max-width: 720px; width: 90%; max-height: 80vh; overflow-y: auto; padding: 0; }
+  .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid #1e1e22; }
+  .modal-header h2 { font-size: 16px; color: #ddd; font-weight: 600; }
+  .modal-close { background: none; border: none; color: #666; font-size: 20px; cursor: pointer; padding: 4px 8px; }
+  .modal-close:hover { color: #aaa; }
+  .modal-body { padding: 20px; }
+  .modal-body pre { background: #0a0a0c; border: 1px solid #1e1e22; border-radius: 6px; padding: 16px; font-size: 12.5px; line-height: 1.6; color: #b0b0b0; white-space: pre-wrap; word-wrap: break-word; font-family: 'SF Mono', 'Menlo', 'Consolas', monospace; }
+  .modal-body .copy-btn { display: block; margin: 12px 0 0 auto; padding: 6px 16px; font-size: 12px; background: #1e1e22; border: 1px solid #333; border-radius: 4px; color: #aaa; cursor: pointer; transition: all 0.15s; }
+  .modal-body .copy-btn:hover { background: #282830; color: #ddd; }
+
+  /* Insights section */
+  .insight { margin-bottom: 14px; border-radius: 8px; overflow: hidden; background: #101012; border: 1px solid #1e1e22; }
+  .insight-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; padding: 8px 14px; background: #141416; color: #888; }
+  .insight-body { padding: 12px 14px; font-size: 13px; color: #999; line-height: 1.7; }
+  .insight-body strong.done { color: #8ab870; }
+  .insight-body strong.todo { color: #b8a878; }
+</style>
+</head>
+<body>
+
+<h1>Darwin OS Architecture: Full Stack vs Panthera</h1>
+<p class="subtitle">Complete system diagram — from hardware through applications — showing what Darwin needs and where Panthera stands. <span style="color:#8ab870">Updated April 7, 2026.</span> Click any grey component for an integration prompt.</p>
+
+<!-- Tab bar -->
+<div class="tab-bar">
+  <button class="tab-btn active" onclick="switchTab('component')">Component View</button>
+  <button class="tab-btn" onclick="switchTab('diagram')">Architecture Diagram</button>
+</div>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-swatch" style="background:#707080"></div> Darwin reference</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#7cb868"></div> Built &amp; working</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#a09060"></div> Partial / in progress</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#706888"></div> Stub / shim</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#444"></div> Not yet present (click for prompt)</div>
+</div>
+
+<!-- ============================================= -->
+<!-- TAB 1: COMPONENT VIEW (original layout)       -->
+<!-- ============================================= -->
+<div id="tab-component" class="tab-content active">
+<div class="columns">
+
+<!-- ===== LEFT COLUMN: FULL DARWIN / macOS ===== -->
+<div class="darwin">
+  <div class="column-header" style="color:#999">Complete Darwin / macOS Architecture</div>
+
+  <!-- Application layer (macOS only) -->
+  <div class="layer">
+    <div class="layer-title">Application Frameworks <span style="color:#444; font-weight:400">(macOS only — NOT Darwin)</span></div>
+    <div class="layer-body">
+      <span class="chip darwin-std" style="opacity:0.4"><span class="dot" style="background:#333"></span>AppKit / UIKit</span>
+      <span class="chip darwin-std" style="opacity:0.4"><span class="dot" style="background:#333"></span>SwiftUI</span>
+      <span class="chip darwin-std" style="opacity:0.4"><span class="dot" style="background:#333"></span>Metal / GPU</span>
+      <span class="chip darwin-std" style="opacity:0.4"><span class="dot" style="background:#333"></span>AVFoundation</span>
+      <span class="chip darwin-std" style="opacity:0.4"><span class="dot" style="background:#333"></span>WebKit</span>
+      <span class="chip darwin-std" style="opacity:0.4"><span class="dot" style="background:#333"></span>CoreAnimation</span>
+      <span class="chip darwin-std" style="opacity:0.4"><span class="dot" style="background:#333"></span>Quartz / CoreGraphics</span>
+    </div>
+    <div class="note">Proprietary macOS frameworks — not part of Darwin.</div>
+  </div>
+
+  <!-- Core Frameworks -->
+  <div class="layer">
+    <div class="layer-title">Core Frameworks &amp; Services</div>
+    <div class="layer-body">
+      <span class="chip darwin-std"><span class="dot"></span>CoreFoundation (CF)</span>
+      <span class="chip darwin-std"><span class="dot"></span>Security.framework</span>
+      <span class="chip darwin-std"><span class="dot"></span>SystemConfiguration</span>
+      <span class="chip darwin-std"><span class="dot"></span>DiskArbitration</span>
+      <span class="chip darwin-std"><span class="dot"></span>CoreServices</span>
+      <span class="chip darwin-std"><span class="dot"></span>IOKit.framework (user)</span>
+      <span class="chip darwin-std"><span class="dot"></span>OpenDirectory</span>
+      <span class="chip darwin-std"><span class="dot"></span>DirectoryService</span>
+    </div>
+    <div class="note">CoreFoundation is open-source (CF-lite). Security, DiskArbitration, SystemConfiguration are key Darwin daemons/frameworks.</div>
+  </div>
+
+  <div class="arrow-section">↕ XPC / Mach IPC ↕</div>
+
+  <!-- System Daemons -->
+  <div class="layer">
+    <div class="layer-title">System Daemons &amp; Services</div>
+    <div class="group-label">Init &amp; Job Management</div>
+    <div class="layer-body">
+      <span class="chip darwin-std tooltip" data-tip="PID 1 — boots system, manages all jobs"><span class="dot"></span>launchd (PID 1)</span>
+      <span class="chip darwin-std tooltip" data-tip="Manages launch agents/daemons lifecycle"><span class="dot"></span>launchctl</span>
+      <span class="chip darwin-std tooltip" data-tip="On-demand XPC service activator"><span class="dot"></span>xpcd</span>
+    </div>
+    <div class="group-label">Networking</div>
+    <div class="layer-body">
+      <span class="chip darwin-std tooltip" data-tip="Network configuration daemon — manages interfaces, DHCP, DNS"><span class="dot"></span>configd</span>
+      <span class="chip darwin-std tooltip" data-tip="Bonjour / zero-conf DNS"><span class="dot"></span>mDNSResponder</span>
+      <span class="chip darwin-std tooltip" data-tip="DNS resolution daemon"><span class="dot"></span>resolved</span>
+      <span class="chip darwin-std tooltip" data-tip="Network extension management"><span class="dot"></span>nesessionmanager</span>
+      <span class="chip darwin-std tooltip" data-tip="Firewall / packet filter"><span class="dot"></span>pf (packet filter)</span>
+    </div>
+    <div class="group-label">Security</div>
+    <div class="layer-body">
+      <span class="chip darwin-std tooltip" data-tip="Keychain, code signing, trust evaluation"><span class="dot"></span>securityd</span>
+      <span class="chip darwin-std tooltip" data-tip="Authorization policy daemon"><span class="dot"></span>authd</span>
+      <span class="chip darwin-std tooltip" data-tip="Open BSM audit subsystem"><span class="dot"></span>auditd</span>
+      <span class="chip darwin-std tooltip" data-tip="Mandatory Access Control framework"><span class="dot"></span>MACF / Sandbox</span>
+    </div>
+    <div class="group-label">Storage &amp; Filesystems</div>
+    <div class="layer-body">
+      <span class="chip darwin-std tooltip" data-tip="Disk mount/unmount arbitration"><span class="dot"></span>diskarbitrationd</span>
+      <span class="chip darwin-std tooltip" data-tip="Filesystem event notification"><span class="dot"></span>fseventsd</span>
+      <span class="chip darwin-std tooltip" data-tip="Core storage / APFS volume management"><span class="dot"></span>corestoraged</span>
+    </div>
+    <div class="group-label">System Services</div>
+    <div class="layer-body">
+      <span class="chip darwin-std tooltip" data-tip="Centralized notification hub for all processes"><span class="dot"></span>notifyd</span>
+      <span class="chip darwin-std tooltip" data-tip="System logging daemon (unified log)"><span class="dot"></span>syslogd / logd</span>
+      <span class="chip darwin-std tooltip" data-tip="Power management daemon"><span class="dot"></span>powerd</span>
+      <span class="chip darwin-std tooltip" data-tip="I/O Kit power management"><span class="dot"></span>IOPowerManagement</span>
+      <span class="chip darwin-std tooltip" data-tip="User/group directory lookups"><span class="dot"></span>opendirectoryd</span>
+      <span class="chip darwin-std tooltip" data-tip="Remote login"><span class="dot"></span>sshd</span>
+      <span class="chip darwin-std tooltip" data-tip="Cron-like periodic job runner"><span class="dot"></span>periodic / cron</span>
+      <span class="chip darwin-std tooltip" data-tip="System time synchronization"><span class="dot"></span>timed / ntpd</span>
+    </div>
+    <div class="note">All managed by launchd via plist job definitions. Communication is primarily XPC (built on Mach ports).</div>
+  </div>
+
+  <div class="arrow-section">↕ System Calls (Mach traps + BSD syscalls) ↕</div>
+
+  <!-- libSystem / dyld -->
+  <div class="layer">
+    <div class="layer-title">Runtime &amp; libSystem Stack</div>
+    <div class="group-label">Dynamic Linker</div>
+    <div class="layer-body">
+      <span class="chip darwin-std tooltip" data-tip="Dynamic linker/loader — resolves dylibs at launch"><span class="dot"></span>dyld</span>
+      <span class="chip darwin-std tooltip" data-tip="Pre-linked shared library cache for fast launch"><span class="dot"></span>dyld shared cache</span>
+    </div>
+    <div class="group-label">libSystem.B.dylib (umbrella — re-exports all below)</div>
+    <div class="layer-body">
+      <span class="chip darwin-std tooltip" data-tip="C standard library"><span class="dot"></span>libsystem_c</span>
+      <span class="chip darwin-std tooltip" data-tip="Mach/BSD syscall stubs"><span class="dot"></span>libsystem_kernel</span>
+      <span class="chip darwin-std tooltip" data-tip="POSIX threads"><span class="dot"></span>libsystem_pthread</span>
+      <span class="chip darwin-std tooltip" data-tip="Memory allocator"><span class="dot"></span>libsystem_malloc</span>
+      <span class="chip darwin-std tooltip" data-tip="Grand Central Dispatch"><span class="dot"></span>libdispatch (GCD)</span>
+      <span class="chip darwin-std tooltip" data-tip="XPC client library"><span class="dot"></span>libxpc</span>
+      <span class="chip darwin-std tooltip" data-tip="User/group/host lookups"><span class="dot"></span>libsystem_info</span>
+      <span class="chip darwin-std tooltip" data-tip="Blocks runtime"><span class="dot"></span>libclosure (Blocks)</span>
+      <span class="chip darwin-std tooltip" data-tip="Platform abstractions"><span class="dot"></span>libsystem_platform</span>
+      <span class="chip darwin-std tooltip" data-tip="DTrace userland probes"><span class="dot"></span>libsystem_dtrace</span>
+      <span class="chip darwin-std tooltip" data-tip="Low-level notify(3) IPC"><span class="dot"></span>libsystem_notify</span>
+      <span class="chip darwin-std tooltip" data-tip="Network info lookups"><span class="dot"></span>libsystem_networkextension</span>
+      <span class="chip darwin-std tooltip" data-tip="DNS resolution"><span class="dot"></span>libsystem_dnssd</span>
+      <span class="chip darwin-std tooltip" data-tip="Sandbox policy"><span class="dot"></span>libsystem_sandbox</span>
+      <span class="chip darwin-std tooltip" data-tip="Kernel event tracing"><span class="dot"></span>libsystem_trace</span>
+      <span class="chip darwin-std tooltip" data-tip="Crash reporting"><span class="dot"></span>libsystem_symptoms</span>
+      <span class="chip darwin-std tooltip" data-tip="Math library"><span class="dot"></span>libm</span>
+    </div>
+    <div class="group-label">Support Libraries</div>
+    <div class="layer-body">
+      <span class="chip darwin-std"><span class="dot"></span>libc++</span>
+      <span class="chip darwin-std"><span class="dot"></span>libc++abi</span>
+      <span class="chip darwin-std"><span class="dot"></span>libobjc</span>
+      <span class="chip darwin-std"><span class="dot"></span>libcorecrypto</span>
+      <span class="chip darwin-std"><span class="dot"></span>libcommoncrypto</span>
+      <span class="chip darwin-std"><span class="dot"></span>libz</span>
+      <span class="chip darwin-std"><span class="dot"></span>libxml2</span>
+      <span class="chip darwin-std"><span class="dot"></span>libcurl</span>
+      <span class="chip darwin-std"><span class="dot"></span>libsqlite3</span>
+      <span class="chip darwin-std"><span class="dot"></span>libffi</span>
+    </div>
+    <div class="note">libSystem.B.dylib is the single umbrella that every Darwin process links. It re-exports ~15 sub-libraries.</div>
+  </div>
+
+  <!-- IPC Mechanisms -->
+  <div class="layer">
+    <div class="layer-title">IPC Mechanisms</div>
+    <div class="layer-body">
+      <span class="chip darwin-std tooltip" data-tip="Fundamental kernel IPC — every process has a task port"><span class="dot"></span>Mach Ports</span>
+      <span class="chip darwin-std tooltip" data-tip="Structured messaging on Mach ports — launchd's native IPC"><span class="dot"></span>XPC</span>
+      <span class="chip darwin-std tooltip" data-tip="Mach Interface Generator — generates C stubs for Mach RPC"><span class="dot"></span>MIG</span>
+      <span class="chip darwin-std tooltip" data-tip="BSD-layer file descriptor events"><span class="dot"></span>kqueue / kevent</span>
+      <span class="chip darwin-std"><span class="dot"></span>POSIX signals</span>
+      <span class="chip darwin-std tooltip" data-tip="Cross-process notification tokens"><span class="dot"></span>notify(3)</span>
+      <span class="chip darwin-std"><span class="dot"></span>Unix pipes/sockets</span>
+      <span class="chip darwin-std"><span class="dot"></span>POSIX shm</span>
+    </div>
+    <div class="note">Mach ports are the primitive. XPC is built on Mach ports. launchd brokers port rights between services.</div>
+  </div>
+
+  <div class="arrow-section">↕ Syscall boundary (mach_msg_trap, unix syscall gate) ↕</div>
+
+  <!-- XNU Kernel -->
+  <div class="layer">
+    <div class="layer-title">XNU Kernel (hybrid: Mach + BSD + IOKit)</div>
+    <div class="group-label">Mach Layer (microkernel core)</div>
+    <div class="layer-body">
+      <span class="chip darwin-std tooltip" data-tip="Mach tasks = address spaces"><span class="dot"></span>Tasks</span>
+      <span class="chip darwin-std tooltip" data-tip="Mach threads = schedulable entities"><span class="dot"></span>Threads</span>
+      <span class="chip darwin-std tooltip" data-tip="Kernel IPC endpoints"><span class="dot"></span>Ports (IPC)</span>
+      <span class="chip darwin-std tooltip" data-tip="Virtual memory subsystem"><span class="dot"></span>VM (pmap, pagers)</span>
+      <span class="chip darwin-std tooltip" data-tip="Priority-based scheduler"><span class="dot"></span>Scheduler</span>
+      <span class="chip darwin-std"><span class="dot"></span>Zone Allocator</span>
+      <span class="chip darwin-std"><span class="dot"></span>Clock subsystem</span>
+      <span class="chip darwin-std"><span class="dot"></span>Lock groups</span>
+    </div>
+    <div class="group-label">BSD Layer (POSIX personality)</div>
+    <div class="layer-body">
+      <span class="chip darwin-std"><span class="dot"></span>Process model</span>
+      <span class="chip darwin-std"><span class="dot"></span>VFS</span>
+      <span class="chip darwin-std"><span class="dot"></span>Network stack</span>
+      <span class="chip darwin-std"><span class="dot"></span>Socket layer</span>
+      <span class="chip darwin-std"><span class="dot"></span>kqueue</span>
+      <span class="chip darwin-std"><span class="dot"></span>File descriptors</span>
+      <span class="chip darwin-std"><span class="dot"></span>Signals</span>
+      <span class="chip darwin-std"><span class="dot"></span>Security (MAC, ACL)</span>
+      <span class="chip darwin-std"><span class="dot"></span>TTY subsystem</span>
+      <span class="chip darwin-std"><span class="dot"></span>SysV IPC / POSIX IPC</span>
+      <span class="chip darwin-std"><span class="dot"></span>DLIL</span>
+    </div>
+    <div class="group-label">IOKit (driver framework)</div>
+    <div class="layer-body">
+      <span class="chip darwin-std"><span class="dot"></span>IORegistryEntry</span>
+      <span class="chip darwin-std"><span class="dot"></span>IOService</span>
+      <span class="chip darwin-std"><span class="dot"></span>Platform Expert</span>
+      <span class="chip darwin-std"><span class="dot"></span>IOPower</span>
+      <span class="chip darwin-std"><span class="dot"></span>IOMemoryDescriptor</span>
+      <span class="chip darwin-std"><span class="dot"></span>IOCatalogue</span>
+    </div>
+    <div class="group-label">Kernel Support</div>
+    <div class="layer-body">
+      <span class="chip darwin-std"><span class="dot"></span>libkern (C++ runtime)</span>
+      <span class="chip darwin-std"><span class="dot"></span>libsa (boot services)</span>
+      <span class="chip darwin-std"><span class="dot"></span>pexpert (HAL)</span>
+      <span class="chip darwin-std"><span class="dot"></span>KPI (kext interfaces)</span>
+      <span class="chip darwin-std"><span class="dot"></span>OSKext loader</span>
+    </div>
+  </div>
+
+  <!-- Kexts -->
+  <div class="layer">
+    <div class="layer-title">Kernel Extensions</div>
+    <div class="group-label">Bus &amp; Platform</div>
+    <div class="layer-body">
+      <span class="chip darwin-std"><span class="dot"></span>IOPCIFamily</span>
+      <span class="chip darwin-std"><span class="dot"></span>IOACPIFamily</span>
+      <span class="chip darwin-std"><span class="dot"></span>AppleAPIC</span>
+      <span class="chip darwin-std"><span class="dot"></span>AppleSMBIOS</span>
+      <span class="chip darwin-std"><span class="dot"></span>Platform Expert (x86)</span>
+    </div>
+    <div class="group-label">Storage</div>
+    <div class="layer-body">
+      <span class="chip darwin-std"><span class="dot"></span>IOStorageFamily</span>
+      <span class="chip darwin-std"><span class="dot"></span>IOAHCIFamily</span>
+      <span class="chip darwin-std"><span class="dot"></span>IOATAFamily</span>
+      <span class="chip darwin-std"><span class="dot"></span>IONVMeFamily</span>
+      <span class="chip darwin-std"><span class="dot"></span>IOSCSIFamily</span>
+      <span class="chip darwin-std"><span class="dot"></span>HFS / APFS kext</span>
+    </div>
+    <div class="group-label">Networking</div>
+    <div class="layer-body">
+      <span class="chip darwin-std"><span class="dot"></span>IONetworkingFamily</span>
+      <span class="chip darwin-std"><span class="dot"></span>IO80211Family</span>
+      <span class="chip darwin-std"><span class="dot"></span>Ethernet drivers</span>
+    </div>
+    <div class="group-label">Input / USB / Other</div>
+    <div class="layer-body">
+      <span class="chip darwin-std"><span class="dot"></span>IOUSBFamily</span>
+      <span class="chip darwin-std"><span class="dot"></span>IOHIDFamily</span>
+      <span class="chip darwin-std"><span class="dot"></span>IOSerialFamily</span>
+      <span class="chip darwin-std"><span class="dot"></span>IOAudioFamily</span>
+      <span class="chip darwin-std"><span class="dot"></span>IOGraphicsFamily</span>
+    </div>
+  </div>
+
+  <!-- Boot -->
+  <div class="layer">
+    <div class="layer-title">Boot Chain</div>
+    <div class="boot-flow">
+      <span class="boot-step" style="background:#141418;color:#999;border:1px solid #242428">Firmware (EFI)</span>
+      <span class="boot-arrow">→</span>
+      <span class="boot-step" style="background:#141418;color:#999;border:1px solid #242428">boot.efi</span>
+      <span class="boot-arrow">→</span>
+      <span class="boot-step" style="background:#141418;color:#999;border:1px solid #242428">XNU</span>
+      <span class="boot-arrow">→</span>
+      <span class="boot-step" style="background:#141418;color:#999;border:1px solid #242428">IOKit matching</span>
+      <span class="boot-arrow">→</span>
+      <span class="boot-step" style="background:#141418;color:#999;border:1px solid #242428">bsd_init</span>
+      <span class="boot-arrow">→</span>
+      <span class="boot-step" style="background:#141418;color:#999;border:1px solid #242428">launchd → daemons → login</span>
+    </div>
+  </div>
+
+  <!-- Hardware -->
+  <div class="layer">
+    <div class="layer-title">Hardware</div>
+    <div class="layer-body">
+      <span class="chip darwin-std"><span class="dot"></span>CPU (x86_64 / ARM64)</span>
+      <span class="chip darwin-std"><span class="dot"></span>RAM</span>
+      <span class="chip darwin-std"><span class="dot"></span>NVMe / SATA</span>
+      <span class="chip darwin-std"><span class="dot"></span>NIC</span>
+      <span class="chip darwin-std"><span class="dot"></span>USB / Thunderbolt</span>
+      <span class="chip darwin-std"><span class="dot"></span>GPU</span>
+      <span class="chip darwin-std"><span class="dot"></span>ACPI / EFI tables</span>
+    </div>
+  </div>
+</div>
+
+<!-- ===== RIGHT COLUMN: PANTHERA ===== -->
+<div class="panthera">
+  <div class="column-header" style="color:#8ab870">Panthera — Current State</div>
+
+  <!-- Application layer -->
+  <div class="layer">
+    <div class="layer-title">Application Frameworks</div>
+    <div class="layer-body">
+      <span class="chip missing" style="cursor:default;"><span class="dot"></span>N/A — headless server target</span>
+    </div>
+    <div class="note">Intentionally excluded. Panthera targets a headless Darwin server.</div>
+  </div>
+
+  <!-- Core Frameworks -->
+  <div class="layer">
+    <div class="layer-title">Core Frameworks &amp; Services</div>
+    <div class="layer-body">
+      <span class="chip built tooltip" data-tip="All 77 source files from CF-1153.18, 1,562 exports, 6 tests pass"><span class="dot"></span>CoreFoundation</span>
+      <span class="chip missing" onclick="showPrompt('security_framework')"><span class="dot"></span>Security.framework</span>
+      <span class="chip missing" onclick="showPrompt('systemconfiguration')" tooltip data-tip="Source in src/configd-1296.40.6/ — now buildable with CF"><span class="dot"></span>SystemConfiguration</span>
+      <span class="chip missing" onclick="showPrompt('diskarbitration')"><span class="dot"></span>DiskArbitration</span>
+      <span class="chip missing" onclick="showPrompt('iokit_user')"><span class="dot"></span>IOKit.framework (user)</span>
+    </div>
+    <div class="note">CoreFoundation fully built. SystemConfiguration, DiskArbitration, Security now unblocked.</div>
+  </div>
+
+  <div class="arrow-section">↕ XPC / Mach IPC ↕</div>
+
+  <!-- System Daemons -->
+  <div class="layer">
+    <div class="layer-title">System Daemons &amp; Services</div>
+    <div class="group-label">Init &amp; Job Management</div>
+    <div class="layer-body">
+      <span class="chip built tooltip" data-tip="Real Apple launchd — runtime.c + core.c from source, 234KB, 385 exports, CFRunLoop event loop"><span class="dot"></span>launchd (PID 1)</span>
+      <span class="chip missing" onclick="showPrompt('launchctl')"><span class="dot"></span>launchctl</span>
+      <span class="chip missing" onclick="showPrompt('xpcd')"><span class="dot"></span>xpcd</span>
+    </div>
+    <div class="group-label">Networking</div>
+    <div class="layer-body">
+      <span class="chip missing" onclick="showPrompt('configd')"><span class="dot"></span>configd</span>
+      <span class="chip missing" onclick="showPrompt('mdnsresponder')"><span class="dot"></span>mDNSResponder</span>
+      <span class="chip missing" onclick="showPrompt('resolved')"><span class="dot"></span>resolved</span>
+      <span class="chip missing" onclick="showPrompt('pf')"><span class="dot"></span>pf</span>
+    </div>
+    <div class="group-label">Security</div>
+    <div class="layer-body">
+      <span class="chip missing" onclick="showPrompt('securityd')"><span class="dot"></span>securityd</span>
+      <span class="chip missing" onclick="showPrompt('authd')"><span class="dot"></span>authd</span>
+      <span class="chip missing" onclick="showPrompt('auditd')"><span class="dot"></span>auditd</span>
+    </div>
+    <div class="group-label">Storage &amp; Filesystems</div>
+    <div class="layer-body">
+      <span class="chip missing" onclick="showPrompt('diskarbitrationd')"><span class="dot"></span>diskarbitrationd</span>
+      <span class="chip missing" onclick="showPrompt('fseventsd')"><span class="dot"></span>fseventsd</span>
+    </div>
+    <div class="group-label">System Services</div>
+    <div class="layer-body">
+      <span class="chip missing" onclick="showPrompt('notifyd')"><span class="dot"></span>notifyd</span>
+      <span class="chip missing" onclick="showPrompt('syslogd')"><span class="dot"></span>syslogd</span>
+      <span class="chip partial tooltip" data-tip="Dropbear-based, not full Apple OpenSSH"><span class="dot"></span>sshd</span>
+      <span class="chip missing" onclick="showPrompt('powerd')"><span class="dot"></span>powerd</span>
+    </div>
+    <div class="note">Daemons now unblocked. CF built, XPC real (92 exports), launchd runs Apple code. Next: notifyd → configd → syslogd.</div>
+  </div>
+
+  <div class="arrow-section">↕ System Calls (Mach traps + BSD syscalls) ↕</div>
+
+  <!-- libSystem -->
+  <div class="layer">
+    <div class="layer-title">Runtime &amp; libSystem Stack</div>
+    <div class="group-label">Dynamic Linker</div>
+    <div class="layer-body">
+      <span class="chip built tooltip" data-tip="Custom Panthera dyld (2268 lines) — ordinal binding, re-export chains, chained fixups, Apple-format shared cache"><span class="dot"></span>dyld (custom)</span>
+      <span class="chip built tooltip" data-tip="Apple-format split-region shared cache — 19 dylibs"><span class="dot"></span>shared cache (19 dylibs)</span>
+    </div>
+    <div class="group-label">libSystem.B.dylib (umbrella)</div>
+    <div class="layer-body">
+      <span class="chip built tooltip" data-tip="Libc-1583.40.7, 602KB"><span class="dot"></span>libsystem_c</span>
+      <span class="chip built tooltip" data-tip="Mach/BSD syscall stubs, 202KB"><span class="dot"></span>libsystem_kernel</span>
+      <span class="chip built tooltip" data-tip="libpthread-519, 83KB"><span class="dot"></span>libsystem_pthread</span>
+      <span class="chip built tooltip" data-tip="libmalloc-474, 237KB"><span class="dot"></span>libsystem_malloc</span>
+      <span class="chip built tooltip" data-tip="libdispatch-1462, 744KB"><span class="dot"></span>libdispatch (GCD)</span>
+      <span class="chip built tooltip" data-tip="Real XPC — 92 exports, full object model, serialization, bootstrap MIG, connection layer"><span class="dot"></span>libxpc</span>
+      <span class="chip built tooltip" data-tip="Libinfo-583, 140KB"><span class="dot"></span>libsystem_info</span>
+      <span class="chip missing" onclick="showPrompt('libclosure')"><span class="dot"></span>libclosure</span>
+      <span class="chip built tooltip" data-tip="libplatform-306, 19KB"><span class="dot"></span>libsystem_platform</span>
+      <span class="chip missing" onclick="showPrompt('libsystem_dtrace')"><span class="dot"></span>libsystem_dtrace</span>
+      <span class="chip missing" onclick="showPrompt('libsystem_notify')"><span class="dot"></span>libsystem_notify</span>
+      <span class="chip missing" onclick="showPrompt('libsystem_sandbox')"><span class="dot"></span>libsystem_sandbox</span>
+      <span class="chip missing" onclick="showPrompt('libsystem_trace')"><span class="dot"></span>libsystem_trace</span>
+    </div>
+    <div class="group-label">Panthera shim libraries</div>
+    <div class="layer-body">
+      <span class="chip stub tooltip" data-tip="14KB — launchd stubs: proc_*, voucher_*, posix_spawnattr_*_np"><span class="dot"></span>libpanthera_launchd</span>
+      <span class="chip stub tooltip" data-tip="84KB — extra symbols for guest binaries"><span class="dot"></span>libpanthera_extra</span>
+      <span class="chip stub tooltip" data-tip="13KB — patch stubs"><span class="dot"></span>libpanthera_patch</span>
+    </div>
+    <div class="group-label">Support Libraries</div>
+    <div class="layer-body">
+      <span class="chip built"><span class="dot"></span>libc++ (1.1MB)</span>
+      <span class="chip built"><span class="dot"></span>libc++abi (286KB)</span>
+      <span class="chip built tooltip" data-tip="objc4-906, 803 exports"><span class="dot"></span>libobjc (803 exports)</span>
+      <span class="chip built tooltip" data-tip="ICU-76142.3.1.1, 8,890 exports"><span class="dot"></span>libicucore (8,890 exports)</span>
+      <span class="chip missing" onclick="showPrompt('libcorecrypto')"><span class="dot"></span>libcorecrypto</span>
+      <span class="chip built"><span class="dot"></span>libz (95KB)</span>
+      <span class="chip built"><span class="dot"></span>libxml2 (1.3MB)</span>
+      <span class="chip built"><span class="dot"></span>libcurl</span>
+      <span class="chip built"><span class="dot"></span>libffi (42KB)</span>
+      <span class="chip built"><span class="dot"></span>libiconv (937KB)</span>
+      <span class="chip built"><span class="dot"></span>libncurses (299KB)</span>
+      <span class="chip built"><span class="dot"></span>libpcre (274KB)</span>
+      <span class="chip built"><span class="dot"></span>libarchive (814KB)</span>
+      <span class="chip built"><span class="dot"></span>libedit (183KB)</span>
+      <span class="chip built"><span class="dot"></span>libexpat (174KB)</span>
+    </div>
+    <div class="note">19 dylibs in shared cache. 9 core sub-libraries from Apple source + real XPC. Shim libraries are candidates for elimination.</div>
+  </div>
+
+  <!-- IPC -->
+  <div class="layer">
+    <div class="layer-title">IPC Mechanisms</div>
+    <div class="layer-body">
+      <span class="chip built tooltip" data-tip="Kernel Mach ports work — mach_msg, mach_port_*, task/thread/host self all verified"><span class="dot"></span>Mach Ports</span>
+      <span class="chip built tooltip" data-tip="Real XPC — serialization, bootstrap MIG, connection layer, two-process verified"><span class="dot"></span>XPC</span>
+      <span class="chip built tooltip" data-tip="32 pre-generated MIG stubs in launchd (bootstrap subsystem 400)"><span class="dot"></span>MIG</span>
+      <span class="chip built tooltip" data-tip="kqueue works, launchd uses kqueue event loop"><span class="dot"></span>kqueue / kevent</span>
+      <span class="chip built"><span class="dot"></span>POSIX signals</span>
+      <span class="chip missing" onclick="showPrompt('notify3')" tooltip data-tip="Source in src/Libnotify-317/"><span class="dot"></span>notify(3)</span>
+      <span class="chip built"><span class="dot"></span>Unix pipes/sockets</span>
+    </div>
+    <div class="note">IPC stack functional. Mach ports, XPC, MIG, kqueue all working. notify(3) is next.</div>
+  </div>
+
+  <div class="arrow-section">↕ Syscall boundary ↕</div>
+
+  <!-- XNU Kernel -->
+  <div class="layer">
+    <div class="layer-title">XNU Kernel (xnu-10002.41.9)</div>
+    <div class="group-label">Mach Layer</div>
+    <div class="layer-body">
+      <span class="chip built"><span class="dot"></span>Tasks</span>
+      <span class="chip built"><span class="dot"></span>Threads</span>
+      <span class="chip built"><span class="dot"></span>Ports (IPC)</span>
+      <span class="chip built"><span class="dot"></span>VM (pmap, pagers)</span>
+      <span class="chip built"><span class="dot"></span>Scheduler</span>
+      <span class="chip built"><span class="dot"></span>Zone Allocator</span>
+      <span class="chip built"><span class="dot"></span>Clock subsystem</span>
+    </div>
+    <div class="group-label">BSD Layer</div>
+    <div class="layer-body">
+      <span class="chip built"><span class="dot"></span>Process model</span>
+      <span class="chip built"><span class="dot"></span>VFS</span>
+      <span class="chip built tooltip" data-tip="TCP/IP — ICMP verified"><span class="dot"></span>Network stack</span>
+      <span class="chip built"><span class="dot"></span>Socket layer</span>
+      <span class="chip built"><span class="dot"></span>kqueue</span>
+      <span class="chip built"><span class="dot"></span>File descriptors</span>
+      <span class="chip built"><span class="dot"></span>Signals</span>
+      <span class="chip built"><span class="dot"></span>TTY subsystem</span>
+      <span class="chip built"><span class="dot"></span>DLIL</span>
+    </div>
+    <div class="group-label">IOKit</div>
+    <div class="layer-body">
+      <span class="chip built"><span class="dot"></span>IORegistryEntry</span>
+      <span class="chip built"><span class="dot"></span>IOService</span>
+      <span class="chip partial tooltip" data-tip="AppleI386GenericPlatform — fails KPI resolution at runtime"><span class="dot"></span>Platform Expert</span>
+      <span class="chip built"><span class="dot"></span>IOCatalogue</span>
+      <span class="chip built"><span class="dot"></span>OSKext loader</span>
+    </div>
+    <div class="group-label">Kernel Support</div>
+    <div class="layer-body">
+      <span class="chip built"><span class="dot"></span>libkern</span>
+      <span class="chip built"><span class="dot"></span>libsa</span>
+      <span class="chip built"><span class="dot"></span>pexpert</span>
+      <span class="chip partial tooltip" data-tip="Some kexts fail to bind"><span class="dot"></span>KPI</span>
+    </div>
+    <div class="note">Most complete layer. Full Sonoma-era XNU from source. Minor KPI issues remain.</div>
+  </div>
+
+  <!-- Kexts -->
+  <div class="layer">
+    <div class="layer-title">Kernel Extensions (18 built)</div>
+    <div class="group-label">Bus &amp; Platform</div>
+    <div class="layer-body">
+      <span class="chip built"><span class="dot"></span>IOPCIFamily</span>
+      <span class="chip built"><span class="dot"></span>IOACPIFamily</span>
+      <span class="chip built"><span class="dot"></span>AppleAPIC</span>
+      <span class="chip built"><span class="dot"></span>AppleSMBIOS</span>
+      <span class="chip partial tooltip" data-tip="Compiled but fails com.apple.kpi.iokit resolution"><span class="dot"></span>AppleI386GenericPlatform</span>
+      <span class="chip built"><span class="dot"></span>AppleI386PCI</span>
+    </div>
+    <div class="group-label">Storage</div>
+    <div class="layer-body">
+      <span class="chip built"><span class="dot"></span>IOStorageFamily</span>
+      <span class="chip built"><span class="dot"></span>IOATAFamily</span>
+      <span class="chip built"><span class="dot"></span>AppleIntelPIIXATA</span>
+      <span class="chip built"><span class="dot"></span>PantheraATAStorage</span>
+      <span class="chip partial tooltip" data-tip="Built but blocked on HFSEncodings"><span class="dot"></span>HFS kext</span>
+      <span class="chip partial tooltip" data-tip="Fails com.apple.kpi.bsd at runtime"><span class="dot"></span>HFSEncodings</span>
+    </div>
+    <div class="group-label">Networking</div>
+    <div class="layer-body">
+      <span class="chip built"><span class="dot"></span>IONetworkingFamily</span>
+      <span class="chip built tooltip" data-tip="RTL8139 — ICMP verified"><span class="dot"></span>AppleRTL8139Ethernet</span>
+    </div>
+    <div class="group-label">Input</div>
+    <div class="layer-body">
+      <span class="chip built"><span class="dot"></span>ApplePS2Controller</span>
+      <span class="chip built"><span class="dot"></span>ApplePS2Keyboard</span>
+      <span class="chip built"><span class="dot"></span>Apple16X50Serial</span>
+      <span class="chip built"><span class="dot"></span>IOSerialFamily</span>
+    </div>
+  </div>
+
+  <!-- Boot -->
+  <div class="layer">
+    <div class="layer-title">Boot Chain</div>
+    <div class="boot-flow">
+      <span class="boot-step" style="background:#141816;color:#a8c89a;border:1px solid #223326">edk2 (UEFI)</span>
+      <span class="boot-arrow" style="color:#666">→</span>
+      <span class="boot-step" style="background:#141816;color:#a8c89a;border:1px solid #223326">Panthera EFI loader</span>
+      <span class="boot-arrow" style="color:#666">→</span>
+      <span class="boot-step" style="background:#141816;color:#a8c89a;border:1px solid #223326">XNU kernel</span>
+      <span class="boot-arrow" style="color:#666">→</span>
+      <span class="boot-step" style="background:#141816;color:#a8c89a;border:1px solid #223326">IOKit matching</span>
+      <span class="boot-arrow" style="color:#666">→</span>
+      <span class="boot-step" style="background:#141816;color:#a8c89a;border:1px solid #223326">bsd_init</span>
+      <span class="boot-arrow" style="color:#666">→</span>
+      <span class="boot-step" style="background:#141816;color:#a8c89a;border:1px solid #223326">launchd → zsh</span>
+    </div>
+    <div class="note">Full boot chain. Real Apple launchd (runtime.c + core.c) as PID 1. Boots to zsh in ~35s under QEMU.</div>
+  </div>
+
+  <!-- Hardware -->
+  <div class="layer">
+    <div class="layer-title">Hardware (QEMU target)</div>
+    <div class="layer-body">
+      <span class="chip built"><span class="dot"></span>x86_64 Haswell (QEMU)</span>
+      <span class="chip built"><span class="dot"></span>4GB RAM</span>
+      <span class="chip built"><span class="dot"></span>PIIX ATA (IDE)</span>
+      <span class="chip built"><span class="dot"></span>RTL8139 NIC</span>
+      <span class="chip built"><span class="dot"></span>PS/2 keyboard</span>
+      <span class="chip built"><span class="dot"></span>Serial console</span>
+      <span class="chip built"><span class="dot"></span>Q35 chipset + ACPI</span>
+    </div>
+  </div>
+</div>
+</div>
+</div>
+
+<!-- ============================================= -->
+<!-- TAB 2: ARCHITECTURE DIAGRAM                   -->
+<!-- ============================================= -->
+<div id="tab-diagram" class="tab-content">
+<div class="arch-diagram">
+
+<div class="arch-label">User Applications &amp; Shell</div>
+<div class="arch-row">
+  <div class="arch-box b-built">zsh / bash<div class="arch-sub">interactive shell</div></div>
+  <div class="arch-box b-built">coreutils<div class="arch-sub">ls, cp, mv, cat, ...</div></div>
+  <div class="arch-box b-partial">sshd (Dropbear)<div class="arch-sub">remote access</div></div>
+  <div class="arch-box b-missing" onclick="showPrompt('launchctl')">launchctl<div class="arch-sub">job management CLI</div></div>
+</div>
+
+<div class="arch-connector"><div class="vline"></div></div>
+
+<div class="arch-label">Core Frameworks</div>
+<div class="arch-row">
+  <div class="arch-box b-built arch-wide">CoreFoundation<div class="arch-sub">CF-1153.18 — 1,562 exports — CFRunLoop, CFString, CFDictionary, plist</div></div>
+  <div class="arch-box b-missing" onclick="showPrompt('security_framework')">Security.framework<div class="arch-sub">keychain, code signing</div></div>
+  <div class="arch-box b-missing" onclick="showPrompt('systemconfiguration')">SystemConfiguration<div class="arch-sub">SCDynamicStore, network prefs</div></div>
+</div>
+
+<div class="arch-connector"><div class="vline"></div></div>
+<div style="text-align:center;color:#555;font-size:11px;padding:2px 0;letter-spacing:2px">XPC / Mach IPC</div>
+<div class="arch-connector"><div class="vline"></div></div>
+
+<div class="arch-label">System Daemons</div>
+<div class="arch-row">
+  <div class="arch-box b-built" style="border-width:2px;">launchd<div class="arch-sub">PID 1 — real Apple runtime.c + core.c, 385 exports</div></div>
+</div>
+<div style="display:flex;justify-content:center;padding:4px 0;">
+  <div style="width:400px;display:flex;justify-content:space-between;">
+    <div style="width:2px;height:20px;background:#333;"></div>
+    <div style="width:2px;height:20px;background:#333;"></div>
+    <div style="width:2px;height:20px;background:#333;"></div>
+    <div style="width:2px;height:20px;background:#333;"></div>
+    <div style="width:2px;height:20px;background:#333;"></div>
+  </div>
+</div>
+<div class="arch-row">
+  <div class="arch-box b-missing" onclick="showPrompt('notifyd')">notifyd<div class="arch-sub">notification hub</div></div>
+  <div class="arch-box b-missing" onclick="showPrompt('configd')">configd<div class="arch-sub">network config</div></div>
+  <div class="arch-box b-missing" onclick="showPrompt('syslogd')">syslogd<div class="arch-sub">system logging</div></div>
+  <div class="arch-box b-missing" onclick="showPrompt('securityd')">securityd<div class="arch-sub">keychain / signing</div></div>
+  <div class="arch-box b-missing" onclick="showPrompt('diskarbitrationd')">diskarbitrationd<div class="arch-sub">disk arbitration</div></div>
+</div>
+
+<div class="arch-connector"><div class="vline"></div></div>
+
+<div class="arch-label">IPC Layer</div>
+<div class="arch-row">
+  <div class="arch-box b-built">XPC<div class="arch-sub">92 exports — TLV serialization, bootstrap MIG, connection layer</div></div>
+  <div class="arch-box b-built">Mach Ports<div class="arch-sub">mach_msg, port rights, task ports</div></div>
+  <div class="arch-box b-built">MIG<div class="arch-sub">bootstrap subsystem 400</div></div>
+  <div class="arch-box b-built">kqueue<div class="arch-sub">BSD event notification</div></div>
+  <div class="arch-box b-missing" onclick="showPrompt('notify3')">notify(3)<div class="arch-sub">cross-process tokens</div></div>
+</div>
+
+<div class="arch-connector"><div class="vline"></div></div>
+
+<div class="arch-label">Runtime — libSystem.B.dylib</div>
+<div class="arch-row">
+  <div class="arch-box b-built">libsystem_c<div class="arch-sub">602KB — Libc-1583</div></div>
+  <div class="arch-box b-built">libsystem_kernel<div class="arch-sub">202KB — syscall stubs</div></div>
+  <div class="arch-box b-built">libsystem_pthread<div class="arch-sub">83KB — POSIX threads</div></div>
+  <div class="arch-box b-built">libsystem_malloc<div class="arch-sub">237KB — magazine alloc</div></div>
+  <div class="arch-box b-built">libdispatch<div class="arch-sub">744KB — GCD</div></div>
+</div>
+<div style="height:6px"></div>
+<div class="arch-row">
+  <div class="arch-box b-built">libxpc<div class="arch-sub">92 exports — real impl</div></div>
+  <div class="arch-box b-built">libsystem_info<div class="arch-sub">140KB — Libinfo</div></div>
+  <div class="arch-box b-built">libsystem_platform<div class="arch-sub">19KB</div></div>
+  <div class="arch-box b-missing" onclick="showPrompt('libclosure')">libclosure<div class="arch-sub">Blocks runtime</div></div>
+  <div class="arch-box b-missing" onclick="showPrompt('libsystem_notify')">libsystem_notify<div class="arch-sub">notify client</div></div>
+</div>
+
+<div class="arch-connector"><div class="vline"></div></div>
+
+<div class="arch-label">Support Libraries</div>
+<div class="arch-row">
+  <div class="arch-box b-built">libobjc<div class="arch-sub">803 exports</div></div>
+  <div class="arch-box b-built">libc++ / abi<div class="arch-sub">C++ runtime</div></div>
+  <div class="arch-box b-built">libicucore<div class="arch-sub">8,890 exports</div></div>
+  <div class="arch-box b-built">libxml2<div class="arch-sub">1.3MB</div></div>
+  <div class="arch-box b-built">libcurl / libz / libffi<div class="arch-sub">networking + compression</div></div>
+  <div class="arch-box b-missing" onclick="showPrompt('libcorecrypto')">libcorecrypto<div class="arch-sub">kernel crypto</div></div>
+</div>
+
+<div class="arch-connector"><div class="vline"></div></div>
+
+<div class="arch-label">Dynamic Linker</div>
+<div class="arch-row">
+  <div class="arch-box b-built arch-wide">Panthera dyld<div class="arch-sub">2,268 lines — ordinal binding, re-exports, chained fixups, Apple-format shared cache (19 dylibs)</div></div>
+</div>
+
+<div class="arch-connector"><div class="vline"></div></div>
+<div style="text-align:center;color:#555;font-size:11px;padding:2px 0;letter-spacing:2px">═══ SYSCALL BOUNDARY ═══</div>
+<div class="arch-connector"><div class="vline"></div></div>
+
+<div class="arch-label">XNU Kernel (xnu-10002.41.9)</div>
+<div class="arch-row">
+  <div class="arch-box b-built arch-wide">Mach<div class="arch-sub">tasks, threads, ports, VM, scheduler, zones, clocks</div></div>
+  <div class="arch-box b-built arch-wide">BSD<div class="arch-sub">processes, VFS, network, sockets, kqueue, FDs, signals, TTY, DLIL</div></div>
+  <div class="arch-box b-built">IOKit<div class="arch-sub">IOService, IORegistry, IOCatalogue</div></div>
+</div>
+
+<div class="arch-connector"><div class="vline"></div></div>
+
+<div class="arch-label">Kernel Extensions (18 built)</div>
+<div class="arch-row">
+  <div class="arch-box b-built">IOPCIFamily<div class="arch-sub">PCI bus</div></div>
+  <div class="arch-box b-built">IOACPIFamily<div class="arch-sub">ACPI</div></div>
+  <div class="arch-box b-built">IOStorageFamily<div class="arch-sub">block devices</div></div>
+  <div class="arch-box b-built">IOATAFamily<div class="arch-sub">ATA/IDE</div></div>
+  <div class="arch-box b-built">IONetworkingFamily<div class="arch-sub">network drivers</div></div>
+  <div class="arch-box b-built">RTL8139<div class="arch-sub">Ethernet</div></div>
+</div>
+<div style="height:6px"></div>
+<div class="arch-row">
+  <div class="arch-box b-built">PS2Controller<div class="arch-sub">polling-based</div></div>
+  <div class="arch-box b-built">PS2Keyboard<div class="arch-sub">input</div></div>
+  <div class="arch-box b-built">16X50Serial<div class="arch-sub">UART</div></div>
+  <div class="arch-box b-partial">HFS kext<div class="arch-sub">needs HFSEncodings</div></div>
+  <div class="arch-box b-partial">PlatformExpert<div class="arch-sub">KPI issues</div></div>
+</div>
+
+<div class="arch-connector"><div class="vline"></div></div>
+
+<div class="arch-label">Boot Chain</div>
+<div class="arch-row">
+  <div class="arch-box b-built">edk2 UEFI<div class="arch-sub">firmware</div></div>
+  <div style="display:flex;align-items:center;color:#555;font-size:16px;">→</div>
+  <div class="arch-box b-built">Panthera EFI loader<div class="arch-sub">C + ASM</div></div>
+  <div style="display:flex;align-items:center;color:#555;font-size:16px;">→</div>
+  <div class="arch-box b-built">XNU mach_kernel<div class="arch-sub">Sonoma-era</div></div>
+  <div style="display:flex;align-items:center;color:#555;font-size:16px;">→</div>
+  <div class="arch-box b-built">IOKit match → bsd_init<div class="arch-sub">device probe + init</div></div>
+  <div style="display:flex;align-items:center;color:#555;font-size:16px;">→</div>
+  <div class="arch-box b-built">launchd → zsh<div class="arch-sub">~35s boot</div></div>
+</div>
+
+<div class="arch-connector"><div class="vline"></div></div>
+
+<div class="arch-label">Hardware (QEMU Q35)</div>
+<div class="arch-row">
+  <div class="arch-box b-built">x86_64 Haswell<div class="arch-sub">4 cores</div></div>
+  <div class="arch-box b-built">4GB RAM</div>
+  <div class="arch-box b-built">PIIX ATA<div class="arch-sub">IDE storage</div></div>
+  <div class="arch-box b-built">RTL8139<div class="arch-sub">NIC</div></div>
+  <div class="arch-box b-built">PS/2<div class="arch-sub">keyboard</div></div>
+  <div class="arch-box b-built">Serial<div class="arch-sub">console I/O</div></div>
+</div>
+
+</div>
+</div>
+
+<!-- ============================================= -->
+<!-- KEY INSIGHTS                                  -->
+<!-- ============================================= -->
+<hr class="section-divider" style="margin-top:36px">
+<h1 style="font-size:22px;margin-top:24px;margin-bottom:16px;color:#ddd">Key Architectural Insights</h1>
+
+<div style="max-width:1600px">
+
+<div class="insight">
+  <div class="insight-title">1. XPC is the glue — not just IPC</div>
+  <div class="insight-body">
+    XPC replaced raw Mach messaging as the standard daemon IPC in modern Darwin. launchd doesn't just start jobs — it <em>brokers XPC connections</em> between services. <strong class="done">Panthera now has real XPC</strong> — a clean-room implementation (92 exports) with full object model, TLV wire-format serialization over Mach ports, bootstrap MIG protocol (check-in ID 402, look-up ID 404), and a connection layer with reply-port handshake. Two-process IPC verified in-guest.
+  </div>
+</div>
+
+<div class="insight">
+  <div class="insight-title">2. The invisible daemon layer</div>
+  <div class="insight-body">
+    Darwin has ~40-60 system daemons on a stock install. The most critical for a functional server:
+    <strong class="todo">notifyd</strong> (notification hub),
+    <strong class="todo">configd</strong> (network config),
+    <strong class="todo">diskarbitrationd</strong> (disk management),
+    <strong class="todo">securityd</strong> (keychain),
+    <strong class="todo">opendirectoryd</strong> (user/group directory).
+    These aren't optional — many Apple libraries silently degrade without them. <strong class="done">With CF, XPC, and real launchd in place, building these from Apple source is finally unblocked.</strong>
+  </div>
+</div>
+
+<div class="insight">
+  <div class="insight-title">3. CoreFoundation — the gateway dependency</div>
+  <div class="insight-body">
+    CF-lite sits between libSystem and the daemon layer. <strong class="done">Panthera has built CF from all 77 source files of CF-1153.18</strong> — 1,562 exports, all 6 verification tests pass on live boot. The shared cache carries the full dependency chain: libc++abi → libc++ → ICU (8,890 exports) → objc4 (803 exports) → CoreFoundation. launchd now uses CF's real CFRunLoop and CFPropertyList code paths.
+  </div>
+</div>
+
+<div class="insight">
+  <div class="insight-title">4. MIG — the forgotten code generator</div>
+  <div class="insight-body">
+    <strong class="done">MIG (Mach Interface Generator)</strong> takes .defs files and generates C stubs for Mach RPC. <strong class="done">Panthera now has real MIG stubs</strong> — the bootstrap protocol (subsystem 400) uses MIG-generated code for check-in (ID 402) and look-up (ID 404). A full MIG pipeline for building kernel-interfacing tools (top, vm_stat, etc.) from source is the next step.
+  </div>
+</div>
+
+<div class="insight">
+  <div class="insight-title">5. The dyld → libSystem → launchd bootstrap triangle</div>
+  <div class="insight-body">
+    Every Darwin process starts: <strong class="done">dyld loads → links libSystem.B.dylib → libSystem's constructor initializes sub-libraries → libdispatch connects to launchd</strong>. This chicken-and-egg is solved by Panthera's custom dyld which manually seeds early globals and emulates the constructor sequence — a significant engineering achievement.
+  </div>
+</div>
+
+<div class="insight">
+  <div class="insight-title">6. Current position: Layer 9 of ~12</div>
+  <div class="insight-body">
+    <strong class="done">Layers 1-7 (done):</strong> kernel → boots → kexts → libSystem → dyld → GCD → XPC + libinfo.<br>
+    <strong class="done">Layer 8 (done):</strong> CoreFoundation (1,562 exports). Real XPC (92 exports). Real Apple launchd (runtime.c + core.c, 234KB, 385 exports). 19-dylib shared cache.<br>
+    <strong class="todo">Layer 9 (current):</strong> Real plist/job bootstrap in launchd. Child process launch via posix_spawn.<br>
+    <strong class="todo">Layers 10-12 (ahead):</strong> Daemon infrastructure (notifyd → configd → syslogd → securityd → sshd) → networking + multi-user → package management → distribution.
+  </div>
+</div>
+
+</div>
+
+<p style="color:#444;font-size:12px;margin-top:24px;padding-top:12px;border-top:1px solid #151515">
+  Sources: Apple Kernel Programming Guide, XNU source (xnu-10002.41.9), Panthera STATUS.md &amp; build artifacts, PureDarwin archives.
+</p>
+
+<!-- ============================================= -->
+<!-- PROMPT MODAL                                  -->
+<!-- ============================================= -->
+<div class="modal-overlay" id="promptModal" onclick="if(event.target===this)closePrompt()">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="promptTitle">Integration Prompt</h2>
+      <button class="modal-close" onclick="closePrompt()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <pre id="promptText"></pre>
+      <button class="copy-btn" onclick="copyPrompt()">Copy to clipboard</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// --- Tab switching ---
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  document.querySelector('[onclick="switchTab(\'' + name + '\')"]').classList.add('active');
+}
+
+// --- Prompt modal ---
+function showPrompt(id) {
+  const p = prompts[id];
+  if (!p) return;
+  document.getElementById('promptTitle').textContent = p.title;
+  document.getElementById('promptText').textContent = p.prompt;
+  document.getElementById('promptModal').classList.add('show');
+}
+function closePrompt() {
+  document.getElementById('promptModal').classList.remove('show');
+}
+function copyPrompt() {
+  const text = document.getElementById('promptText').textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.querySelector('.copy-btn');
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = 'Copy to clipboard', 1500);
+  });
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closePrompt(); });
+
+// --- Integration prompts for each missing component ---
+const prompts = {
+
+notifyd: {
+  title: "notifyd — Cross-Process Notification Daemon",
+  prompt: `Integrate notifyd into Panthera from Apple open-source.
+
+SOURCE: src/Libnotify-317/
+  - notifyd source is in src/Libnotify-317/notifyd/
+  - Client library (libsystem_notify) is in src/Libnotify-317/libnotify/
+
+DEPENDENCIES (all met):
+  - CoreFoundation (built — 1,562 exports)
+  - Mach ports (working)
+  - libdispatch (built — 744KB)
+  - launchd (built — real Apple code)
+
+BUILD STEPS:
+1. Compile notifyd daemon from src/Libnotify-317/notifyd/
+   - Main files: notifyd.c, notify_proc.c, pathwatch.c, timer.c
+   - Links: CoreFoundation, libdispatch, libsystem_kernel
+   - Install to: rootfs/usr/sbin/notifyd
+2. Build libsystem_notify from src/Libnotify-317/libnotify/
+   - Main files: notify_client.c, notify.h
+   - Build as dylib, add to shared cache
+   - This provides notify_post(), notify_register_dispatch(), etc.
+3. Create launchd plist: /System/Library/LaunchDaemons/com.apple.notifyd.plist
+   - Label: com.apple.notifyd
+   - ProgramArguments: ["/usr/sbin/notifyd"]
+   - MachServices: { "com.apple.system.notification_center": true }
+4. Register with launchd bootstrap so other daemons can look it up via XPC.
+5. Test: Run notify_post("com.apple.test") from one process, verify notify_register_dispatch() callback fires in another.
+
+PRIORITY: This is the #1 daemon to build — configd, syslogd, and many Apple libraries call notify_post()/notify_register() and silently degrade without notifyd.`
+},
+
+configd: {
+  title: "configd — Network Configuration Daemon",
+  prompt: `Integrate configd into Panthera from Apple open-source.
+
+SOURCE: src/configd-1296.40.6/
+  - configd daemon: src/configd-1296.40.6/configd.tproj/
+  - SystemConfiguration framework: src/configd-1296.40.6/SystemConfiguration.fproj/
+  - SCDynamicStore: the key-value store that manages network state
+
+DEPENDENCIES:
+  - CoreFoundation (built) — configd uses CFRunLoop, CFDictionary, CFPropertyList heavily
+  - XPC (built — 92 exports) — configd registers as an XPC service
+  - notifyd (build first!) — configd posts notifications for network state changes
+  - launchd (built) — manages configd lifecycle
+  - IOKit.framework (user) — configd reads IOKit registry for network interfaces (may need IOKitUser stubs)
+
+BUILD STEPS:
+1. Build SystemConfiguration.framework from src/configd-1296.40.6/SystemConfiguration.fproj/
+   - Core files: SCDynamicStore.c, SCPreferences.c, SCNetworkConfiguration.c, SCNetworkReachability.c
+   - Links: CoreFoundation
+   - Install headers to usr/include/SystemConfiguration/
+2. Build configd from src/configd-1296.40.6/configd.tproj/
+   - Main: configd.m (yes, ObjC — libobjc is available)
+   - Plugins: IPMonitor, KernelEventMonitor, InterfaceNamer
+   - Install to: rootfs/usr/libexec/configd
+3. Create launchd plist: /System/Library/LaunchDaemons/com.apple.configd.plist
+   - MachServices: { "com.apple.SystemConfiguration.configd": true }
+4. Start minimal: get SCDynamicStore running with loopback interface.
+5. Test: scutil --dns and scutil --nwi should return interface info.
+
+NOTE: configd has many plugins. Start with a minimal set — just enough to configure the RTL8139 NIC for DHCP.`
+},
+
+syslogd: {
+  title: "syslogd — System Log Daemon",
+  prompt: `Integrate syslogd into Panthera from Apple open-source.
+
+SOURCE: userland/syslog/ or fetch from apple-oss-distributions/syslog
+  - Alternatively, use a minimal syslogd that speaks the BSD syslog protocol
+
+DEPENDENCIES:
+  - CoreFoundation (built) — for plist config parsing
+  - notifyd (build first) — syslogd posts notify tokens for log events
+  - launchd (built)
+
+BUILD STEPS:
+1. Fetch syslog source from https://github.com/apple-oss-distributions/syslog
+2. Build syslogd daemon
+   - Core: syslogd.c, daemon.c, bsd_out.c, asl_action.c
+   - Links: CoreFoundation, libdispatch
+   - Install to: rootfs/usr/sbin/syslogd
+3. Build the ASL (Apple System Log) client library if not already stubbed
+   - Provides asl_log(), asl_open(), asl_new(), etc.
+   - Many Apple daemons call ASL functions — cf_panthera_support.c already has ASL stubs
+4. Create launchd plist: /System/Library/LaunchDaemons/com.apple.syslogd.plist
+5. Create /etc/syslog.conf and /etc/asl.conf
+6. Test: logger "hello from Panthera" — check /var/log/system.log
+
+FALLBACK: If Apple syslogd is too complex, start with a minimal BSD syslogd that just writes to /var/log/system.log. Replace the ASL stubs in cf_panthera_support.c later.`
+},
+
+securityd: {
+  title: "securityd — Security Server Daemon",
+  prompt: `Integrate securityd into Panthera.
+
+SOURCE: Fetch from https://github.com/apple-oss-distributions/Security
+  - securityd is part of the Security framework open-source project
+  - This is a large, complex project — start with a minimal subset
+
+DEPENDENCIES:
+  - CoreFoundation (built)
+  - XPC (built) — securityd is an XPC service
+  - libcorecrypto (NOT built yet — need this first or stub it)
+  - launchd (built)
+  - SQLite (for keychain database — libsqlite3 may need building)
+
+BUILD STEPS:
+1. Fetch Security source from apple-oss-distributions
+2. Assess scope — securityd does: keychain storage, code signing validation, trust evaluation, authorization
+3. For Panthera Phase 1, only need: minimal keychain + code signing bypass
+4. Build Security.framework client library (at minimum: SecItem.h APIs)
+5. Build securityd with minimal keychain backend (SQLite-based)
+6. Install to rootfs/usr/sbin/securityd
+7. Create launchd plist with XPC MachServices registration
+
+REALISTIC APPROACH: securityd is one of the most complex Apple daemons. Consider building a stub securityd that always returns "allowed" for code signing checks and provides a flat-file keychain. Replace incrementally.`
+},
+
+launchctl: {
+  title: "launchctl — launchd Control CLI",
+  prompt: `Build launchctl for Panthera to manage launchd jobs.
+
+SOURCE: src/launchd-842.92.1/support/launchctl.c
+  - Single-file tool in the launchd source tree
+  - Communicates with launchd via XPC/Mach IPC
+
+DEPENDENCIES:
+  - libxpc (built — 92 exports, real implementation)
+  - CoreFoundation (built — for plist parsing)
+  - launchd (built — real Apple code)
+  - Bootstrap MIG protocol (built — check-in/look-up working)
+
+BUILD STEPS:
+1. Compile src/launchd-842.92.1/support/launchctl.c
+   - Links: libxpc, CoreFoundation, libSystem
+   - May need: vproc_priv.h stubs (some already in cf_panthera_support.c)
+2. Install to rootfs/bin/launchctl
+3. Add to shared cache or ensure dyld can load it
+4. Test basic commands:
+   - launchctl list (show running jobs)
+   - launchctl load /System/Library/LaunchDaemons/com.apple.notifyd.plist
+   - launchctl start com.apple.notifyd
+   - launchctl print system/
+
+NOTE: launchctl is the primary admin tool for Darwin. Without it, you can't load/unload daemons, inspect job state, or debug service issues. High priority for usability.`
+},
+
+xpcd: {
+  title: "xpcd — XPC Service Activator",
+  prompt: `Build xpcd for on-demand XPC service activation.
+
+NOTE: xpcd is NOT open-source from Apple. You'll need to implement it.
+
+DEPENDENCIES:
+  - libxpc (built — 92 exports)
+  - launchd (built — brokers Mach port rights)
+  - CoreFoundation (built)
+
+IMPLEMENTATION:
+1. xpcd sits between launchd and XPC services
+2. When a client calls xpc_connection_create() for a service name:
+   a. libxpc does bootstrap_look_up via MIG to launchd
+   b. launchd checks if service is registered
+   c. If service isn't running, launchd (or xpcd) launches it on demand
+   d. Service calls xpc_main() which does bootstrap_check_in
+   e. launchd transfers port rights to client
+3. For Panthera Phase 1: launchd already handles bootstrap — you may not need a separate xpcd
+4. Just ensure launchd's job_dispatch() path can launch services on first look-up
+5. Test: Register a dummy XPC service, connect from a client, verify on-demand launch
+
+REALISTIC: Skip standalone xpcd for now. Enhance launchd's existing job_dispatch() to support on-demand XPC service activation. xpcd is primarily needed for sandboxed GUI apps, which Panthera doesn't target.`
+},
+
+diskarbitrationd: {
+  title: "diskarbitrationd — Disk Arbitration Daemon",
+  prompt: `Integrate diskarbitrationd into Panthera.
+
+SOURCE: Fetch from https://github.com/apple-oss-distributions/DiskArbitration
+
+DEPENDENCIES:
+  - CoreFoundation (built) — DADisk objects, plist config
+  - XPC/Mach IPC (built) — clients talk to diskarbitrationd via Mach ports
+  - IOKit (kernel side built, userland IOKitUser may need stubs)
+  - launchd (built)
+
+BUILD STEPS:
+1. Fetch DiskArbitration source from apple-oss-distributions
+2. Build DiskArbitration.framework (client library):
+   - Provides DASessionCreate(), DADiskCreateFromBSDName(), DADiskMount(), etc.
+   - Install headers to usr/include/DiskArbitration/
+3. Build diskarbitrationd daemon:
+   - Monitors IOKit registry for disk appearance/disappearance
+   - Arbitrates mount requests
+   - Install to rootfs/usr/sbin/diskarbitrationd
+4. Create launchd plist: /System/Library/LaunchDaemons/com.apple.diskarbitrationd.plist
+5. Test: Insert a virtual disk in QEMU, verify diskarbitrationd detects and mounts it
+
+REALISTIC APPROACH: Panthera uses a single root disk. diskarbitrationd is lower priority — needed for hot-plug storage or multi-volume setups. Build after notifyd + configd.`
+},
+
+fseventsd: {
+  title: "fseventsd — Filesystem Events Daemon",
+  prompt: `Integrate fseventsd into Panthera.
+
+SOURCE: Fetch from https://github.com/apple-oss-distributions/fsevents
+
+DEPENDENCIES:
+  - XNU kernel fsevents device (/dev/fsevents) — should already be in the kernel
+  - CoreFoundation (built)
+  - launchd (built)
+
+BUILD STEPS:
+1. Verify /dev/fsevents exists in Panthera's XNU build
+2. Fetch fsevents source from apple-oss-distributions
+3. Build fseventsd — reads from /dev/fsevents and maintains a persistent log
+4. Install to rootfs/usr/sbin/fseventsd
+5. Create launchd plist
+6. Test: touch a file, verify fseventsd records the event
+
+PRIORITY: Low for headless server. Needed if you want file-watching tools (e.g., for build systems or Spotlight-like indexing). Build after core daemons.`
+},
+
+mdnsresponder: {
+  title: "mDNSResponder — Bonjour / Zero-Conf DNS",
+  prompt: `Integrate mDNSResponder into Panthera.
+
+SOURCE: Fetch from https://github.com/apple-oss-distributions/mDNSResponder
+  - Also provides dns_sd.h client API (used by many network tools)
+
+DEPENDENCIES:
+  - CoreFoundation (built)
+  - configd (build first — mDNSResponder needs network interface info)
+  - launchd (built)
+  - Working network stack (RTL8139 NIC verified)
+
+BUILD STEPS:
+1. Fetch mDNSResponder source
+2. Build mDNSResponder daemon:
+   - Core: mDNSMacOSX.c, daemon.c, helper.c
+   - Platform port: mDNSPosix may be easier than mDNSMacOSX initially
+   - Install to rootfs/usr/sbin/mDNSResponder
+3. Build dns_sd client library (libdns_sd):
+   - Provides DNSServiceBrowse(), DNSServiceResolve(), etc.
+   - Used by many networking tools and daemons
+4. Build dns-sd command-line tool for testing
+5. Create launchd plist: /System/Library/LaunchDaemons/com.apple.mDNSResponder.plist
+6. Test: dns-sd -B _ssh._tcp should discover SSH services on local network
+
+NOTE: mDNSResponder also handles unicast DNS resolution on Darwin. This is important for general DNS lookups, not just Bonjour.`
+},
+
+resolved: {
+  title: "resolved — DNS Resolution Daemon",
+  prompt: `DNS resolution for Panthera.
+
+NOTE: On modern Darwin, DNS resolution goes through mDNSResponder or libresolv. There isn't a separate "resolved" daemon in the traditional sense — Apple routes DNS through mDNSResponder.
+
+APPROACH FOR PANTHERA:
+1. Build mDNSResponder (see that prompt) — it handles both mDNS and unicast DNS
+2. Alternatively, ensure /etc/resolv.conf is properly configured and libc's resolver works
+3. Panthera's libsystem_info (Libinfo-583) already has DNS resolution via res_query()
+
+QUICK FIX:
+- Verify /etc/resolv.conf has nameserver entries
+- Test: nslookup or host command from Panthera shell
+- If basic DNS works via libc resolver, you may not need a separate daemon
+
+BUILD mDNSResponder for full Darwin-native DNS (see mDNSResponder prompt).`
+},
+
+pf: {
+  title: "pf — Packet Filter Firewall",
+  prompt: `Enable pf (packet filter) on Panthera.
+
+NOTE: pf is a kernel-level packet filter, already part of XNU's BSD network stack. The userland tool is pfctl.
+
+SOURCE:
+  - Kernel side: Already in XNU (net/pfvar.h, net/pf.c, etc.)
+  - Userland tool: Fetch from https://github.com/apple-oss-distributions/pf or build from BSD pf sources
+
+DEPENDENCIES:
+  - XNU kernel with pf compiled in (check CONFIG_PF in kernel config)
+  - Network stack (working — RTL8139 verified)
+
+BUILD STEPS:
+1. Verify pf is compiled into the XNU kernel (grep for PFVAR or pf_ioctl in kernel config)
+2. If not, add options PF to kernel config and rebuild
+3. Build pfctl userland tool:
+   - Source: pf project or FreeBSD pfctl (portable)
+   - Install to rootfs/sbin/pfctl
+4. Create /etc/pf.conf with basic rules
+5. Test: pfctl -e (enable), pfctl -f /etc/pf.conf (load rules), pfctl -s rules (show)
+
+PRIORITY: Medium — useful for security hardening but not blocking other components.`
+},
+
+authd: {
+  title: "authd — Authorization Policy Daemon",
+  prompt: `Integrate authd into Panthera.
+
+SOURCE: Part of the Security framework — https://github.com/apple-oss-distributions/Security
+  - authd is in OSX/authd/ within the Security project
+
+DEPENDENCIES:
+  - securityd (build first or in parallel)
+  - CoreFoundation (built)
+  - XPC (built)
+  - SQLite (for authorization database)
+
+BUILD STEPS:
+1. Fetch Security source
+2. Build authd from OSX/authd/:
+   - authd handles authorization rights evaluation
+   - Uses /etc/authorization plist for policy rules
+3. Install to rootfs/usr/libexec/authd
+4. Create /etc/authorization with default rules
+5. Create launchd plist
+
+REALISTIC: authd is needed for privilege escalation (like sudo integration). For now, Panthera can use Unix DAC (discretionary access control) and sudo directly. Build authd when you need proper authorization policy enforcement.`
+},
+
+auditd: {
+  title: "auditd — BSM Audit Daemon",
+  prompt: `Integrate auditd into Panthera.
+
+SOURCE:
+  - Panthera already has libbsm in userland/libbsm/
+  - auditd source: fetch from https://github.com/apple-oss-distributions/openbsm or use OpenBSM
+
+DEPENDENCIES:
+  - XNU kernel audit subsystem (should be compiled in — check AUDIT in kernel config)
+  - libbsm (already in userland/libbsm/)
+  - launchd (built)
+
+BUILD STEPS:
+1. Verify kernel audit support: check /dev/audit or audit syscalls in XNU config
+2. Build auditd from OpenBSM:
+   - Source: openbsm/bin/auditd/
+   - Links: libbsm
+   - Install to rootfs/usr/sbin/auditd
+3. Build audit CLI tool: openbsm/bin/audit/
+4. Create /etc/security/audit_control config file
+5. Create launchd plist: /System/Library/LaunchDaemons/com.apple.auditd.plist
+6. Test: audit -e (enable), praudit /var/audit/trail (read events)
+
+PRIORITY: Low for development. Useful for security compliance and intrusion detection. Build late in the roadmap.`
+},
+
+powerd: {
+  title: "powerd — Power Management Daemon",
+  prompt: `Integrate powerd into Panthera.
+
+SOURCE: Fetch from https://github.com/apple-oss-distributions/PowerManagement
+
+DEPENDENCIES:
+  - IOKit (kernel IOPower subsystem)
+  - CoreFoundation (built)
+  - XPC (built)
+  - configd (should be built first — powerd interacts with system state)
+  - launchd (built)
+
+BUILD STEPS:
+1. Fetch PowerManagement source
+2. Build powerd — handles sleep/wake, idle timers, thermal management
+3. Install to rootfs/usr/libexec/powerd
+4. Create launchd plist
+
+REALISTIC: For a QEMU VM, powerd is low priority — VMs don't sleep or manage batteries. Build this only if you need proper shutdown/restart orchestration via "shutdown -h now" or similar.`
+},
+
+libclosure: {
+  title: "libclosure — Blocks Runtime",
+  prompt: `Build libclosure (Blocks runtime) for Panthera.
+
+SOURCE: src/libclosure-90/
+  - Very small library — ~10 source files
+  - Provides Block_copy(), Block_release(), _Block_object_assign(), etc.
+
+DEPENDENCIES:
+  - libobjc (built — 803 exports) — Blocks interact with ObjC
+  - libdispatch (built) — dispatch_block_t uses Block runtime
+  - compiler-rt (clang provides this)
+
+BUILD STEPS:
+1. Compile src/libclosure-90/:
+   - Key files: runtime.c, data.c
+   - Headers: Block.h, Block_private.h
+2. Build as libclosure.dylib (or libsystem_blocks.dylib)
+3. Add to shared cache (would be dylib #20)
+4. Re-export through libSystem.B.dylib
+5. Test: Write a simple C program that uses ^{ } block syntax, verify it runs
+
+NOTE: libclosure is tiny but load-bearing — GCD blocks, ObjC blocks, and CF callbacks all depend on it. With libobjc already built, this should compile cleanly. High value for low effort.`
+},
+
+libsystem_dtrace: {
+  title: "libsystem_dtrace — DTrace Userland Probes",
+  prompt: `Build libsystem_dtrace for Panthera.
+
+SOURCE: src/dtrace-401/ (already fetched)
+  - Userland library is in lib/libdtrace/
+
+DEPENDENCIES:
+  - XNU kernel DTrace support (check if DTRACE is compiled in)
+  - libsystem_kernel (built)
+
+BUILD STEPS:
+1. Check if XNU was compiled with DTRACE support (likely yes for Sonoma-era)
+2. Build libsystem_dtrace from src/dtrace-401/lib/
+   - Provides dtrace_probe(), __dtrace_*() symbols
+   - Many are no-ops if DTrace isn't active
+3. Build as dylib, add to shared cache
+4. Re-export through libSystem.B.dylib
+
+MINIMAL APPROACH: If full DTrace is too complex, create a stub libsystem_dtrace that provides the required symbols as no-ops. Many Darwin binaries reference DTrace probes but function fine without them active. The ctfconvert/ctfmerge tools in the build system are already stubbed with 'true'.`
+},
+
+libsystem_notify: {
+  title: "libsystem_notify — Notify Client Library",
+  prompt: `Build libsystem_notify for Panthera.
+
+SOURCE: src/Libnotify-317/libnotify/
+  - Client-side library for notify(3) API
+  - Talks to notifyd daemon via Mach ports
+
+DEPENDENCIES:
+  - notifyd daemon (build first! — see notifyd prompt)
+  - Mach ports (working)
+  - libdispatch (built) — for notify_register_dispatch()
+
+BUILD STEPS:
+1. Build notifyd daemon first (see notifyd prompt)
+2. Compile src/Libnotify-317/libnotify/:
+   - Key files: notify_client.c, table.c, notify_ipc.defs (MIG)
+   - Need to run MIG on notify_ipc.defs to generate stubs
+3. Build as libsystem_notify.dylib
+4. Add to shared cache
+5. Re-export through libSystem.B.dylib
+6. Test: notify_post("test.token") + notify_register_dispatch() in two processes
+
+NOTE: Build libsystem_notify and notifyd together — they're two halves of the same system. The MIG .defs file in the source defines the wire protocol between them.`
+},
+
+libsystem_sandbox: {
+  title: "libsystem_sandbox — Sandbox Policy Library",
+  prompt: `Build or stub libsystem_sandbox for Panthera.
+
+SOURCE: Apple's sandbox is NOT fully open-source. The kernel MAC framework is in XNU, but the userland policy engine is proprietary.
+
+APPROACH:
+1. Create a minimal libsystem_sandbox that provides the required API surface:
+   - sandbox_init(), sandbox_free_error()
+   - sandbox_check()
+   - sandbox_extension_issue_*(), sandbox_extension_consume()
+2. All functions return "allowed" / success — no actual sandboxing
+3. Build as libsystem_sandbox.dylib, add to shared cache
+4. Re-export through libSystem.B.dylib
+
+BUILD STEPS:
+1. Create userland/libsystem/sandbox_stub.c with stub implementations
+2. Export: sandbox_init() → return 0 (success)
+3. Export: sandbox_check() → return 0 (allowed)
+4. Export: sandbox_free_error() → no-op
+5. Compile and add to shared cache
+
+NOTE: Actual sandboxing is a nice-to-have for security hardening but not needed for basic daemon operation. Many Apple daemons call sandbox_init() at startup but function fine without real enforcement.`
+},
+
+libsystem_trace: {
+  title: "libsystem_trace — Kernel Trace Library",
+  prompt: `Build or stub libsystem_trace for Panthera.
+
+SOURCE: Fetch from https://github.com/apple-oss-distributions/libdispatch or related trace projects
+  - os_log() and os_signpost() APIs are in libsystem_trace
+
+APPROACH FOR NOW — STUB:
+1. Create a stub libsystem_trace providing:
+   - os_log_create(), os_log_type_enabled() → no-op / return false
+   - _os_log_impl() → write to stderr or /var/log/system.log
+   - os_signpost_*() → no-op
+   - _os_activity_*() → no-op
+2. Build as libsystem_trace.dylib, add to shared cache
+3. Re-export through libSystem.B.dylib
+
+LATER — REAL IMPLEMENTATION:
+- os_log is the modern replacement for syslog/ASL on Darwin
+- Full implementation requires kernel trace buffer support
+- Build after syslogd is working — then route os_log() to syslogd
+
+NOTE: Many modern Apple daemons use os_log(). Without even stubs, they'll fail to link. A stub that redirects to stderr is sufficient for development.`
+},
+
+libcorecrypto: {
+  title: "libcorecrypto — Kernel Crypto Library",
+  prompt: `Build or integrate corecrypto for Panthera.
+
+SOURCE: src/CommonCrypto-600025/ (already fetched)
+  - Apple's corecrypto source: https://github.com/apple-oss-distributions/corecrypto
+  - CommonCrypto wraps corecrypto for userland use
+
+DEPENDENCIES:
+  - libSystem (built)
+  - Compiler intrinsics for AES-NI, SHA extensions
+
+BUILD APPROACH:
+1. Option A — Build from Apple source:
+   - Fetch corecrypto from apple-oss-distributions
+   - Build libcorecrypto.dylib with AES, SHA, RSA, ECDSA implementations
+   - Complex build — many platform-specific assembly files
+
+2. Option B — Use CommonCrypto (already fetched):
+   - Build from src/CommonCrypto-600025/
+   - Provides CC_SHA256, CCCrypt, CCHmac, etc.
+   - Simpler API surface, still useful
+
+3. Option C — Use OpenSSL as backend:
+   - Panthera has OpenSSL in userland/openssl/
+   - Create a libcorecrypto shim that maps corecrypto API → OpenSSL calls
+   - Fastest path to working crypto
+
+BUILD STEPS (Option C — recommended):
+1. Create userland/libsystem/corecrypto_shim.c
+2. Map: ccchacha20poly1305 → EVP_chacha20_poly1305, ccsha256 → SHA256, etc.
+3. Build as libcorecrypto.dylib linking OpenSSL
+4. Add to shared cache
+
+NEEDED BY: securityd, sshd (real OpenSSH), codesigning, HTTPS/TLS in libcurl`
+},
+
+security_framework: {
+  title: "Security.framework — Security Services",
+  prompt: `Build Security.framework for Panthera.
+
+SOURCE: https://github.com/apple-oss-distributions/Security
+
+DEPENDENCIES:
+  - CoreFoundation (built)
+  - libcorecrypto or OpenSSL (need crypto backend)
+  - XPC (built) — Security.framework talks to securityd
+  - SQLite (for keychain)
+
+MINIMAL BUILD:
+1. Fetch Security source from apple-oss-distributions
+2. Build only the client framework (not the full securityd):
+   - SecItem.h API (keychain CRUD)
+   - SecKey.h (key generation)
+   - SecCertificate.h (cert parsing)
+   - SecTrust.h (trust evaluation)
+3. For Panthera Phase 1, stub securityd interaction:
+   - SecItemCopyMatching() → read from flat file
+   - SecTrustEvaluate() → always return trust
+4. Install framework to /System/Library/Frameworks/Security.framework
+5. Add to shared cache
+
+REALISTIC: Full Security.framework is massive. Start with the minimum needed by sshd and other daemons — typically just code signing validation (which can be bypassed) and basic keychain reads.`
+},
+
+systemconfiguration: {
+  title: "SystemConfiguration.framework",
+  prompt: `Build SystemConfiguration framework for Panthera.
+
+SOURCE: src/configd-1296.40.6/SystemConfiguration.fproj/
+  - Already fetched! Source is in the configd project
+
+DEPENDENCIES:
+  - CoreFoundation (built)
+  - configd daemon (build alongside or after)
+
+BUILD STEPS:
+1. Compile from src/configd-1296.40.6/SystemConfiguration.fproj/:
+   - SCDynamicStore.c — key-value store client
+   - SCPreferences.c — persistent preferences
+   - SCNetworkConfiguration.c — network interface config
+   - SCNetworkReachability.c — reachability checking
+   - SCNetworkConnection.c — VPN/PPP connections
+2. Headers to install: usr/include/SystemConfiguration/
+   - SystemConfiguration.h, SCDynamicStore.h, SCPreferences.h, etc.
+3. Build as SystemConfiguration.framework dylib
+4. Add to shared cache
+5. Test: Write a program that calls SCDynamicStoreCreate() and reads network keys
+
+NOTE: SystemConfiguration is the framework. configd is the daemon. Build both from the same source tree (src/configd-1296.40.6/). The framework can be built first — it'll fail to connect to configd at runtime until the daemon is running, but it'll link fine.`
+},
+
+diskarbitration: {
+  title: "DiskArbitration.framework",
+  prompt: `Build DiskArbitration framework for Panthera.
+
+SOURCE: Fetch from https://github.com/apple-oss-distributions/DiskArbitration
+
+DEPENDENCIES:
+  - CoreFoundation (built)
+  - IOKit.framework (user — may need IOKitUser stubs)
+
+BUILD STEPS:
+1. Fetch DiskArbitration source
+2. Build the framework (client library side):
+   - DASession.c, DADisk.c, DARequest.c
+   - Provides DASessionCreate(), DADiskCreateFromBSDName(), DADiskGetBSDName()
+3. Install headers to usr/include/DiskArbitration/
+4. Build as framework dylib, add to shared cache
+5. Build diskarbitrationd daemon separately (see that prompt)
+
+PRIORITY: Lower — mainly needed for hot-plug storage support. Panthera's single root disk works without DiskArbitration.`
+},
+
+iokit_user: {
+  title: "IOKit.framework (Userland)",
+  prompt: `Build IOKit.framework (userland) for Panthera.
+
+SOURCE: src/IOKitUser-100065.40.4/ (already fetched!)
+
+DEPENDENCIES:
+  - CoreFoundation (built) — IOKit user uses CF types extensively
+  - Mach ports (working) — IOKit user talks to kernel IOKit via Mach
+  - XNU kernel IOKit (built)
+
+BUILD STEPS:
+1. Compile from src/IOKitUser-100065.40.4/:
+   - IOKitLib.c — main IOKit user library
+   - IOCFSerialize.c, IOCFUnserialize.c — CF↔IOKit serialization
+   - IOHIDLib.c — HID device access (needed for input)
+2. Key APIs to export:
+   - IOServiceGetMatchingService(), IOServiceMatching()
+   - IORegistryEntryCreateCFProperties()
+   - IOServiceOpen(), IOConnectCallMethod()
+   - IOIteratorNext(), IOObjectRelease()
+3. Build as IOKit.framework dylib
+4. Install headers to /System/Library/Frameworks/IOKit.framework/Headers/
+5. Add to shared cache
+6. Test: Write a program that enumerates IOKit registry entries
+
+NOTE: IOKitUser is the userland gateway to kernel IOKit. Many daemons (configd, diskarbitrationd, powerd) need it to query hardware state. This is a high-priority framework — builds cleanly with CF already available.`
+},
+
+notify3: {
+  title: "notify(3) — Cross-Process Notification",
+  prompt: `Build the notify(3) subsystem for Panthera.
+
+This is two components — build together:
+1. notifyd daemon (server)
+2. libsystem_notify (client library)
+
+See the individual prompts for notifyd and libsystem_notify for full details.
+
+SOURCE: src/Libnotify-317/
+  - Both daemon and client library in one source tree
+
+QUICK SUMMARY:
+1. Build notifyd from src/Libnotify-317/notifyd/
+2. Build libsystem_notify from src/Libnotify-317/libnotify/
+3. Run MIG on notify_ipc.defs for the wire protocol
+4. Register notifyd in launchd
+5. Add libsystem_notify to shared cache
+6. Test cross-process notification
+
+This is the #1 priority subsystem — almost every Apple daemon uses notify(3).`
+}
+
+};
+</script>
+
+</body>
+</html>

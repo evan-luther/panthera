@@ -1,0 +1,26 @@
+--- session.c.orig
++++ session.c
+@@ -1375,6 +1375,16 @@
+ 			perror("setgid");
+ 			exit(1);
+ 		}
++#if defined(PANTHERA)
++		{
++			gid_t g = pw->pw_gid;
++
++			if (setgroups(1, &g) < 0) {
++				perror("setgroups");
++				exit(1);
++			}
++		}
++#else
+ 		/* Initialize the group list. */
+ 		if (initgroups(pw->pw_name, pw->pw_gid) < 0) {
+ 			perror("initgroups");
+@@ -1382,6 +1392,7 @@
+ 		}
+ 		endgrent();
+ #endif
++#endif
+ 
+ 		platform_setusercontext_post_groups(pw);

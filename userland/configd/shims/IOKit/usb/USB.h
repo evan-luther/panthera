@@ -1,0 +1,6 @@
+#ifndef PANTHERA_IOKIT_USB_USB_H
+#define PANTHERA_IOKIT_USB_USB_H
+
+#define kIOUSBAppleVendorID 0x05AC
+
+#endif /* PANTHERA_IOKIT_USB_USB_H */

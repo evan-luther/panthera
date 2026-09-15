@@ -1,0 +1,72 @@
+--- sshd.c.orig
++++ sshd.c
+@@ -1404,6 +1404,9 @@
+ 			 */
+ 			platform_pre_fork();
+ 			listening++;
++#ifdef PANTHERA
++			panthera_sshd_tracef("PANTHERA:sshd fork enter newsock=%d startup_w=%d", *newsock, startup_p[1]);
++#endif
+ 			if ((pid = fork()) == 0) {
+ 				/*
+ 				 * Child.  Close the listening and
+@@ -1413,16 +1416,31 @@
+ 				 * We return from this function to handle
+ 				 * the connection.
+ 				 */
++#ifdef PANTHERA
++				panthera_sshd_tracef("PANTHERA:sshd child forked pid=%ld newsock=%d startup_w=%d", (long)getpid(), *newsock, startup_p[1]);
++#endif
+ 				platform_post_fork_child();
++#ifdef PANTHERA
++				panthera_sshd_trace("PANTHERA:sshd child post_fork returned");
++#endif
+ 				startup_pipe = startup_p[1];
+ 				close_startup_pipes();
++#ifdef PANTHERA
++				panthera_sshd_trace("PANTHERA:sshd child close_startup_pipes returned");
++#endif
+ 				close_listen_socks();
++#ifdef PANTHERA
++				panthera_sshd_trace("PANTHERA:sshd child close_listen_socks returned");
++#endif
+ 				*sock_in = *newsock;
+ 				*sock_out = *newsock;
+ 				log_init(__progname,
+ 				    options.log_level,
+ 				    options.log_facility,
+ 				    log_stderr);
++#ifdef PANTHERA
++				panthera_sshd_trace("PANTHERA:sshd child log_init returned");
++#endif
+ 				if (rexec_flag)
+ 					close(config_s[0]);
+ 				else {
+@@ -1433,15 +1451,27 @@
+ 					 * child has received the rexec state
+ 					 * from the server.
+ 					 */
++#ifdef PANTHERA
++					panthera_sshd_trace("PANTHERA:sshd child startup pipe write enter");
++#endif
+ 					(void)atomicio(vwrite, startup_pipe,
+ 					    "\0", 1);
++#ifdef PANTHERA
++					panthera_sshd_trace("PANTHERA:sshd child startup pipe write returned");
++#endif
+ 				}
+ 				free(pfd);
++#ifdef PANTHERA
++				panthera_sshd_trace("PANTHERA:sshd child returning to connection handler");
++#endif
+ 				return;
+ 			}
+ 
+ 			/* Parent.  Stay in the loop. */
+ 			platform_post_fork_parent(pid);
++#ifdef PANTHERA
++			panthera_sshd_tracef("PANTHERA:sshd parent post_fork pid=%ld", (long)pid);
++#endif
+ 			if (pid == -1)
+ 				error("fork: %.100s", strerror(errno));
+ 			else

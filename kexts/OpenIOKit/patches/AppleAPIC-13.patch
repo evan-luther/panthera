@@ -1,0 +1,75 @@
+--- a/AppleAPIC.cpp	2026-09-07 23:19:54.239691551 -0400
++++ b/AppleAPIC.cpp	2026-09-07 23:50:22.607388189 -0400
+@@ -44,9 +44,9 @@
+ 
+ bool AppleAPIC::start( IOService * provider )
+ {
++    IOInterruptAction handler;
+     OSNumber *        num;
+     const OSSymbol *  sym;
+-
+     _handleSleepWakeFunction = OSSymbol::withCString(
+                                kHandleSleepWakeFunction );
+ 
+@@ -201,6 +201,19 @@
+           (uint32_t) GET_FIELD( indexRead( kIndexVER ), kVERVersion ),
+           (uint32_t) _vectorBase, (uint32_t) (_vectorBase + _vectorCount - 1));
+ 
++    getPlatform()->setCPUInterruptProperties(provider);
++    handler = getInterruptHandlerAddress();
++    if (provider->registerInterrupt(0, this, handler, 0) != kIOReturnSuccess)
++    {
++        APIC_LOG("IOAPIC-%ld: failed to register CPU interrupt source\n", _vectorBase);
++        goto fail;
++    }
++    if (provider->enableInterrupt(0) != kIOReturnSuccess)
++    {
++        APIC_LOG("IOAPIC-%ld: failed to enable CPU interrupt source\n", _vectorBase);
++        goto fail;
++    }
++
+     getPlatform()->registerInterruptController( (OSSymbol *) sym, this );
+     sym->release();
+ 
+@@ -502,7 +515,11 @@
+                               IOInterruptVector * vector )
+ {
+     APIC_LOG("IOAPIC-%ld: %s %ld\n", _vectorBase, __FUNCTION__, vectorNumber);
+-    enableVectorEntry( vectorNumber );
++    // ponytail: level-triggered PCI lines stay masked until drivers stop timer-polling, e.g. RTL8139. Upgrade path: unmask level-triggered once all PCI drivers handle hardware ISRs without timer-polling.
++    if ( (_vectorTable[vectorNumber].l32 & kRTLOTriggerModeMask) == kRTLOTriggerModeEdge )
++    {
++        enableVectorEntry( vectorNumber );
++    }
+ }
+ 
+ //---------------------------------------------------------------------------
+@@ -515,12 +532,17 @@
+ {
+     IOInterruptVector *     vector;
+     IOInterruptVectorNumber vectorNumber;
++    IOInterruptVectorNumber systemVector;
+ 
+     // Convert the system interrupt to a vector table entry offset.
+ 
+-    vectorNumber = SYS_TO_PIC_VECTOR(source);
+-    assert( vectorNumber >= 0 );
+-    assert( vectorNumber < _vectorCount );
++    systemVector = source & 0xff;
++    vectorNumber = SYS_TO_PIC_VECTOR(systemVector);
++    if ( vectorNumber < 0 || vectorNumber >= _vectorCount )
++    {
++        lapic_end_of_interrupt();
++        return kIOReturnBadArgument;
++    }
+ 
+     vector = &vectors[ vectorNumber ];
+ 
+@@ -550,6 +572,7 @@
+ 
+     vector->interruptActive = 0;
+ 
++    lapic_end_of_interrupt();
+ 
+     return kIOReturnSuccess;
+ }

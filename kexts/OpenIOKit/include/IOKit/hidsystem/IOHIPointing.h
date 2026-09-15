@@ -1,0 +1,6 @@
+#ifndef PANTHERA_FORWARD_IOKIT_HIDSYSTEM_IOHIPOINTING_H
+#define PANTHERA_FORWARD_IOKIT_HIDSYSTEM_IOHIPOINTING_H
+
+#include "../../../../../src/IOHIDFamily-2008.40.6/IOHIDSystem/IOKit/hidsystem/IOHIPointing.h"
+
+#endif

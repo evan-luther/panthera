@@ -1,0 +1,64 @@
+--- Plugins/KernelEventMonitor/eventmon.c
++++ Plugins/KernelEventMonitor/eventmon.c
+@@ -825,9 +825,32 @@
+ #endif
+ 	return;
+ }
++
++#if defined(PANTHERA)
++#define MAX_TIMER_COUNT		30
++
++static int S_timer_count = 0;
+ 
++static uint64_t
++get_timer_interval(int count)
++{
++	if (count < 4) {
++		return (50LL * NSEC_PER_MSEC);
++	} else if (count < 8) {
++		return (100LL * NSEC_PER_MSEC);
++	} else if (count < 12) {
++		return (250LL * NSEC_PER_MSEC);
++	} else if (count < 16) {
++		return (500LL * NSEC_PER_MSEC);
++	} else if (count < 20) {
++		return (1000LL * NSEC_PER_MSEC);
++	}
++	return (6LL * NSEC_PER_SEC);
++}
++#else
+ #define TIMER_INTERVAL		(6LL * NSEC_PER_SEC)
+ #define MAX_TIMER_COUNT		20
++#endif
+ 
+ static void
+ check_for_new_interfaces(void * context);
+@@ -835,10 +858,18 @@
+ static void
+ schedule_timer(void)
+ {
++#if defined(PANTHERA)
++	uint64_t interval = get_timer_interval(S_timer_count);
++	dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, interval),
++			 S_kev_queue,
++			 NULL,
++			 check_for_new_interfaces);
++#else
+ 	dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, TIMER_INTERVAL),
+ 			 S_kev_queue,
+ 			 NULL,
+ 			 check_for_new_interfaces);
++#endif
+ 	return;
+ }
+ 
+@@ -850,6 +881,9 @@
+ 	char		msg[32];
+ 
+ 	count++;
++#if defined(PANTHERA)
++	S_timer_count = count;
++#endif
+ 
+ 	/* update KEV driven content in case a message got dropped */
+ 	snprintf(msg, sizeof(msg), "update %d (of %d)", count, MAX_TIMER_COUNT);

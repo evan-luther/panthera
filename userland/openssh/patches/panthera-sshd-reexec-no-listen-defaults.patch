@@ -1,0 +1,42 @@
+--- servconf.h.orig
++++ servconf.h
+@@ -299,7 +299,7 @@
+ 
+ struct connection_info *get_connection_info(struct ssh *, int, int);
+ void	 initialize_server_options(ServerOptions *);
+-void	 fill_default_server_options(ServerOptions *);
++void	 fill_default_server_options(ServerOptions *, int);
+ int	 process_server_config_line(ServerOptions *, char *, const char *, int,
+ 	    int *, struct connection_info *, struct include_list *includes);
+ void	 process_permitopen(struct ssh *ssh, ServerOptions *options);
+--- servconf.c.orig
++++ servconf.c
+@@ -273,7 +273,7 @@
+ }
+ 
+ void
+-fill_default_server_options(ServerOptions *options)
++fill_default_server_options(ServerOptions *options, int fill_listen_addrs)
+ {
+ 	u_int i;
+ 
+@@ -302,7 +302,7 @@
+ 		options->ports[options->num_ports++] = SSH_DEFAULT_PORT;
+ 	if (options->address_family == -1)
+ 		options->address_family = AF_UNSPEC;
+-	if (options->listen_addrs == NULL)
++	if (fill_listen_addrs && options->listen_addrs == NULL)
+ 		add_listen_addr(options, NULL, NULL, 0);
+ 	if (options->pid_file == NULL)
+ 		options->pid_file = xstrdup(_PATH_SSH_DAEMON_PID_FILE);
+--- sshd.c.orig
++++ sshd.c
+@@ -1773,7 +1773,7 @@
+ #endif
+ 
+ 	/* Fill in default values for those options not explicitly set. */
+-	fill_default_server_options(&options);
++	fill_default_server_options(&options, !rexeced_flag);
+ 
+ 	/* Check that options are sensible */
+ 	if (options.authorized_keys_command_user == NULL &&

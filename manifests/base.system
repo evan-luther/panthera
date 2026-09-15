@@ -1,0 +1,102 @@
+# Panthera rootfs manifest
+# Format:
+# kind|required|source|destination|producer|verification|condition|note
+#
+# kind: file, dir, glob, generated
+# required: required, optional
+# condition: always, VAR=VALUE, VAR!=VALUE
+
+file|required|userland/launchd/launchd|/sbin/launchd|userland/launchd/build_launchd.sh|bash userland/libsystem/verify_exports.sh|always|PID 1 runtime
+file|required|userland/launchd/launchctl|/bin/launchctl,/usr/bin/launchctl|userland/launchd/build_launchd.sh|launchctl smoke|always|launchd control client
+file|required|userland/shell/zsh|/bin/zsh|src/zsh-108/build-zsh-panthera.sh|bash userland/libsystem/verify_exports.sh|always|console shell and /bin/sh target
+generated|required|userland/shell/zsh|/bin/sh,/bin/zsh5|rootfs/scripts/stage_base_payload.sh|boot to login|always|shell compatibility symlinks
+file|required|userland/shell/mini_sh|/bin/mini_sh|userland/shell build flow|boot verification harness|always|minimal deterministic verification shell
+file|required|userland/dyld/dyld|/usr/lib/dyld|userland/dyld/build_dyld.sh|bash userland/libsystem/verify_exports.sh|always|dynamic loader
+file|required|userland/libsystem/build/sysroot/usr/lib/libSystem.B.dylib|/usr/lib/libSystem.B.dylib|userland/libsystem/build/relink_libSystem.sh|bash userland/libsystem/verify_exports.sh|always|libSystem umbrella
+generated|required|userland/libsystem/build/sysroot/usr/lib/libSystem.B.dylib|/usr/lib/libSystem.dylib|rootfs/scripts/stage_base_payload.sh|cc compile/link smoke|always|Darwin libSystem linker compatibility symlink
+glob|required|userland/libsystem/build/sysroot/usr/lib/system/*.dylib|/usr/lib/system/|userland/libsystem/build/build_layers567.sh|bash userland/libsystem/verify_exports.sh|always|re-exported system dylibs
+file|required|images/shared_cache/dyld_shared_cache_x86_64|/System/Library/dyld/dyld_shared_cache_x86_64|tools/build_shared_cache.sh|boot to login|PANTHERA_NO_SHARED_CACHE!=1|dyld shared cache used by verified boot
+file|required|rootfs/System/Library/CoreServices/SystemVersion.plist|/System/Library/CoreServices/SystemVersion.plist|source tree|sw_vers smoke|always|system version metadata
+file|required|rootfs/System/Library/LaunchDaemons/com.panthera.login.plist|/System/Library/LaunchDaemons/com.panthera.login.plist|source tree|boot to login|always|login prompt service
+file|required|rootfs/System/Library/LaunchDaemons/com.panthera.netbringup.plist|/System/Library/LaunchDaemons/com.panthera.netbringup.plist|source tree|network smoke|always|stable default networking fallback
+file|required|userland/notifyd/bin/notifyd|/usr/sbin/notifyd|userland/notifyd/build_notifyd.sh|notify smoke and boot|PANTHERA_STAGE_NOTIFYD!=0|default notify daemon
+file|required|rootfs/System/Library/LaunchDaemons/com.apple.notifyd.plist|/System/Library/LaunchDaemons/com.apple.notifyd.plist|source tree|notify smoke and boot|PANTHERA_STAGE_NOTIFYD!=0|notifyd launch daemon
+file|required|userland/syslog/sbin/syslogd|/usr/sbin/syslogd|userland/syslog/build_syslogd.sh|syslog smoke and boot|PANTHERA_STAGE_SYSLOGD!=0|minimal Panthera syslog daemon
+file|required|rootfs/System/Library/LaunchDaemons/com.apple.syslogd.plist|/System/Library/LaunchDaemons/com.apple.syslogd.plist|source tree|syslog smoke and boot|PANTHERA_STAGE_SYSLOGD!=0|Apple-label syslog launch daemon
+file|required|rootfs/System/Library/LaunchDaemons/com.panthera.syslogd.plist|/System/Library/LaunchDaemons/com.panthera.syslogd.plist|source tree|syslog smoke and boot|PANTHERA_STAGE_SYSLOGD!=0|legacy Panthera-label syslog launch daemon retained for current boot parity
+file|required|userland/system_cmds/bin/ps|/bin/ps,/usr/bin/ps|userland/system_cmds/build_system_cmds.sh|ps smoke|always|process status utility
+file|required|userland/system_cmds/bin/stty|/bin/stty,/usr/bin/stty|userland/system_cmds/build_system_cmds.sh|stty -f /dev/console smoke|always|terminal line configuration utility
+file|required|userland/system_cmds/bin/shutdown|/sbin/shutdown,/usr/sbin/shutdown|userland/system_cmds/build_system_cmds.sh|shutdown smoke|always|system shutdown utility
+file|required|userland/mount_tools/sbin/mount|/sbin/mount|userland/mount_tools/build_mount_tools.sh|mount smoke|always|filesystem mount utility
+file|optional|userland/notifyd/bin/notifyutil|/usr/bin/notifyutil|userland/notifyd/build_notifyd.sh|notify smoke|always|notify command-line utility
+file|optional|userland/libbsm/libbsm.0.dylib|/usr/lib/libbsm.0.dylib|userland/libbsm build flow|boot to login|always|audit library compatibility
+file|optional|userland/libsystem/build/sysroot/usr/lib/libiconv.2.dylib|/usr/lib/libiconv.2.dylib|userland/libsystem build flow|boot to login|always|iconv compatibility library
+file|optional|userland/libsystem/build/sysroot/usr/lib/libncurses.5.4.dylib|/usr/lib/libncurses.5.4.dylib|tools/build_apple_ncurses.sh|ncurses smoke|always|terminal runtime library
+generated|optional|userland/libsystem/build/sysroot/usr/lib/libncurses.5.4.dylib|/usr/lib/libncurses.5.dylib,/usr/lib/libncurses.dylib,/usr/lib/libcurses.dylib,/usr/lib/libtermcap.dylib|rootfs/scripts/stage_package_payload.sh|ncurses smoke|always|terminal runtime compatibility symlinks
+file|optional|userland/corefoundation/libCoreFoundation.dylib|/usr/lib/libCoreFoundation.dylib|userland/corefoundation/build_cf.sh|CoreFoundation smoke|always|CoreFoundation runtime
+generated|optional|userland/corefoundation/libCoreFoundation.dylib|/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation|rootfs/scripts/stage_package_payload.sh|CoreFoundation smoke|always|CoreFoundation framework compatibility symlink
+file|optional|userland/iokituser/lib/libIOKit.dylib|/usr/lib/libIOKit.dylib|userland/iokituser/build_iokituser.sh|IOKit smoke|always|IOKit userland bridge
+generated|optional|userland/iokituser/lib/libIOKit.dylib|/System/Library/Frameworks/IOKit.framework/IOKit|rootfs/scripts/stage_package_payload.sh|IOKit smoke|always|IOKit framework compatibility symlink
+file|optional|userland/configd/lib/libSystemConfiguration.dylib|/usr/lib/libSystemConfiguration.dylib|userland/configd/build_systemconfiguration.sh|SystemConfiguration smoke|always|SystemConfiguration compatibility library
+generated|optional|userland/configd/lib/libSystemConfiguration.dylib|/System/Library/Frameworks/SystemConfiguration.framework/SystemConfiguration|rootfs/scripts/stage_package_payload.sh|SystemConfiguration smoke|always|SystemConfiguration framework compatibility symlink
+dir|optional|rootfs/etc|/etc/|source tree|rootfs verifier and boot|always|static guest etc payload
+dir|optional|vendor/usertemplate-109|/System/Library/User Template/English.lproj,/System/Library/User Template/Non_localized,/Users/panthera|source tree|login smoke|always|default user template payload
+glob|optional|userland/login/bin/*|/usr/bin/|userland/login/build_login.sh|login smoke|always|login path utilities
+glob|optional|userland/coreutils/bin/*|/bin/,/usr/bin/|userland/coreutils/build_more_coreutils.sh|shell smoke|always|base shell utilities
+glob|optional|userland/nano/bin/*|/bin/,/usr/bin/|userland/nano/build_nano.sh|editor smoke|always|nano editor binaries
+file|optional|userland/nano/etc/nanorc|/etc/nanorc|userland/nano/build_nano.sh|editor smoke|always|nano runtime config
+dir|optional|userland/nano/share/nano|/usr/share/nano/|userland/nano/build_nano.sh|editor smoke|always|nano syntax files
+file|optional|userland/awk/bin/awk|/usr/bin/awk|userland/awk/build_awk.sh|awk smoke|always|awk utility
+glob|optional|userland/less/bin/*|/usr/bin/|userland/less/build_less.sh|pager smoke|always|less pager tools
+generated|optional|userland/less/bin/less|/usr/bin/more|rootfs/scripts/stage_base_payload.sh|pager smoke|always|more compatibility symlink
+file|optional|userland/bash/bin/bash|/bin/bash,/usr/bin/bash|userland/bash/build_bash.sh|shell smoke|always|bash shell
+file|optional|userland/vim/bin/vim|/usr/bin/vim|userland/vim/build_vim.sh|editor smoke|always|vim editor
+generated|optional|userland/vim/bin/vim|/usr/bin/vi,/usr/bin/view|rootfs/scripts/stage_base_payload.sh|editor smoke|always|vi and view compatibility symlinks
+file|optional|userland/bzip2/bin/bzip2|/usr/bin/bzip2|userland/bzip2/build_bzip2.sh|compression smoke|always|bzip2 utility
+generated|optional|userland/bzip2/bin/bzip2|/usr/bin/bunzip2,/usr/bin/bzcat|rootfs/scripts/stage_base_payload.sh|compression smoke|always|bzip2 compatibility symlinks
+file|optional|userland/bzip2/lib/libbz2.1.0.dylib|/usr/lib/libbz2.1.0.dylib|userland/bzip2/build_bzip2.sh|grep compressed-input smoke|always|bzip2 runtime library used by Apple grep
+generated|optional|userland/bzip2/lib/libbz2.1.0.dylib|/usr/lib/libbz2.dylib|rootfs/scripts/stage_base_payload.sh|library load smoke|always|bzip2 linker compatibility symlink
+glob|optional|userland/system_cmds/bin/*|/sbin/,/usr/bin/,/usr/sbin/|userland/system_cmds/build_system_cmds.sh|shell smoke|always|system command payload
+file|optional|userland/libsystem/build/sysroot/usr/lib/libz.1.3.1.dylib|/usr/lib/libz.1.3.1.dylib|userland/zlib build flow|library load smoke|always|zlib runtime
+generated|optional|userland/libsystem/build/sysroot/usr/lib/libz.1.3.1.dylib|/usr/lib/libz.1.dylib,/usr/lib/libz.dylib|rootfs/scripts/stage_base_payload.sh|library load smoke|always|zlib compatibility symlinks
+file|optional|src/apple-ncurses-71.100.2/ncurses/misc/terminfo.src|/usr/share/terminfo/|tools/build_ncurses_host_tools.sh|terminal smoke|always|terminfo input source
+generated|optional|src/apple-ncurses-71.100.2/ncurses/misc/terminfo.src|/usr/share/terminfo/x/xterm,/usr/share/terminfo/x/xterm-256color|rootfs/stage_terminfo.sh|terminal smoke|always|compiled baseline terminfo records
+file|optional|build/apple-ncurses-host-tools/out/bin/tic|host tool only|tools/build_ncurses_host_tools.sh|terminal smoke|always|host terminfo compiler used during assembly
+file|optional|userland/expat/lib/libexpat.1.dylib|/usr/lib/libexpat.1.dylib|userland/expat/build_expat.sh|library load smoke|always|expat runtime
+generated|optional|userland/expat/lib/libexpat.1.dylib|/usr/lib/libexpat.dylib|rootfs/scripts/stage_package_payload.sh|library load smoke|always|expat compatibility symlink
+file|optional|userland/libxml2/lib/libxml2.2.dylib|/usr/lib/libxml2.2.dylib|userland/libxml2/build_libxml2.sh|xml smoke|always|libxml2 runtime
+generated|optional|userland/libxml2/lib/libxml2.2.dylib|/usr/lib/libxml2.dylib|rootfs/scripts/stage_package_payload.sh|xml smoke|always|libxml2 compatibility symlink
+file|optional|userland/libxml2/bin/xmllint|/usr/bin/xmllint|userland/libxml2/build_libxml2.sh|xml smoke|always|libxml2 CLI
+file|optional|userland/pcre/lib/libpcre.1.dylib|/usr/lib/libpcre.1.dylib|userland/pcre/build_pcre.sh|library load smoke|always|PCRE runtime
+generated|optional|userland/pcre/lib/libpcre.1.dylib|/usr/lib/libpcre.dylib|rootfs/scripts/stage_package_payload.sh|library load smoke|always|PCRE compatibility symlink
+file|optional|userland/libffi/lib/libffi.dylib|/usr/lib/libffi.dylib|userland/libffi/build_libffi.sh|library load smoke|always|libffi runtime
+file|optional|userland/libedit/lib/libedit.3.dylib|/usr/lib/libedit.3.dylib|userland/libedit/build_libedit.sh|line editor smoke|always|libedit runtime
+generated|optional|userland/libedit/lib/libedit.3.dylib|/usr/lib/libedit.dylib|rootfs/scripts/stage_package_payload.sh|line editor smoke|always|libedit compatibility symlink
+file|optional|userland/libcxxabi/libc++abi.dylib|/usr/lib/libc++abi.dylib|userland/libcxxabi/build_libcxxabi.sh|C++ load smoke|always|C++ ABI runtime
+file|optional|userland/libcxx/libc++.1.dylib|/usr/lib/libc++.1.dylib|userland/libcxx/build_libcxx.sh|C++ load smoke|always|C++ runtime
+generated|optional|userland/libcxx/libc++.1.dylib|/usr/lib/libc++.dylib|rootfs/scripts/stage_package_payload.sh|C++ load smoke|always|C++ runtime compatibility symlink
+file|optional|userland/icu/libicucore.A.dylib|/usr/lib/libicucore.A.dylib|userland/icu/build_icu.sh|ICU load smoke|always|ICU runtime
+generated|optional|userland/icu/libicucore.A.dylib|/usr/lib/libicucore.dylib|rootfs/scripts/stage_package_payload.sh|ICU load smoke|always|ICU compatibility symlink
+file|optional|userland/icu/data/icudt76l.dat|/usr/share/icu/icudt76l.dat|userland/icu/build_icu.sh|ICU smoke|always|ICU data
+file|optional|userland/objc4/lib/libobjc.A.dylib|/usr/lib/libobjc.A.dylib|userland/objc4/build_objc4.sh|Objective-C load smoke|always|Objective-C runtime
+generated|optional|userland/objc4/lib/libobjc.A.dylib|/usr/lib/libobjc.dylib|rootfs/scripts/stage_package_payload.sh|Objective-C load smoke|always|Objective-C compatibility symlink
+file|optional|userland/libarchive/lib/libarchive.13.dylib|/usr/lib/libarchive.13.dylib|userland/libarchive/build_libarchive.sh|archive smoke|always|libarchive runtime
+generated|optional|userland/libarchive/lib/libarchive.13.dylib|/usr/lib/libarchive.dylib|rootfs/scripts/stage_package_payload.sh|archive smoke|always|libarchive compatibility symlink
+file|optional|userland/libarchive/bin/bsdtar|/usr/bin/bsdtar|userland/libarchive/build_libarchive.sh|archive smoke|always|tar implementation
+generated|optional|userland/libarchive/bin/bsdtar|/usr/bin/tar|rootfs/scripts/stage_package_payload.sh|archive smoke|always|tar compatibility symlink
+file|optional|userland/libarchive/bin/bsdcpio|/usr/bin/bsdcpio|userland/libarchive/build_libarchive.sh|archive smoke|always|cpio implementation
+generated|optional|userland/libarchive/bin/bsdcpio|/usr/bin/cpio|rootfs/scripts/stage_package_payload.sh|archive smoke|always|cpio compatibility symlink
+file|optional|userland/patch_cmds/bin/patch|/usr/bin/patch|userland/patch_cmds/build_patch_cmds.sh|patch smoke|always|patch utility
+file|optional|userland/file_cmds/bin/install|/usr/bin/install|userland/file_cmds/build_file_cmds.sh|install smoke|always|BSD install utility for package bootstrap scripts
+file|optional|userland/bmake/bin/bmake|/usr/bin/bmake|userland/bmake/build_bmake.sh|bmake smoke|always|BSD make utility for package bootstrap scripts
+generated|optional|userland/bmake/bin/bmake|/usr/bin/make|rootfs/scripts/stage_package_payload.sh|bmake smoke|always|BSD make compatibility symlink
+dir|optional|userland/bmake/share/mk|/usr/share/mk/|userland/bmake/build_bmake.sh|bmake smoke|always|bmake portable mk include files
+file|optional|userland/cctools/bin/ar|/usr/bin/ar|userland/cctools/build_cctools.sh|archive tool smoke|always|Apple cctools archive utility
+file|optional|userland/cctools/bin/ranlib|/usr/bin/ranlib|userland/cctools/build_cctools.sh|archive tool smoke|always|Apple cctools ranlib utility
+file|optional|userland/ld64/bin/ld|/usr/bin/ld|userland/ld64/build_ld64.sh|linker smoke|always|Apple ld64 Mach-O linker for x86_64 Panthera binaries
+file|optional|userland/clang/bin/clang-17|/usr/bin/clang-17|userland/clang/build_clang.sh|clang compile/link smoke|always|Panthera x86_64 clang compiler
+generated|optional|userland/clang/bin/clang-17|/usr/bin/clang|rootfs/scripts/stage_package_payload.sh|clang compile/link smoke|always|clang driver compatibility symlink
+file|optional|userland/clang/bin/cc|/usr/bin/cc|userland/clang/build_clang.sh|cc compile/link smoke|always|Panthera default C compiler driver
+file|optional|userland/clang/lib/libLTO.dylib|/usr/lib/libLTO.dylib|userland/clang/build_clang.sh|cc compile/link smoke|always|LLVM LTO plugin loaded by Apple ld64
+dir|optional|userland/clang/lib/clang/17|/usr/lib/clang/17/|userland/clang/build_clang.sh|clang header smoke|always|clang builtin resource headers
+file|optional|tools/panthera_sdk_hello|/usr/bin/panthera_sdk_hello|tools/smoke_panthera_sdk.sh|Panthera SDK smoke|PANTHERA_STAGE_SDK_SMOKE=1|generated SDK hello binary for compile/link/run verification

@@ -1,0 +1,12 @@
+--- openbsd-compat/getrrsetbyname.c
++++ openbsd-compat/getrrsetbyname.c
+@@ -193,6 +193,9 @@
+     unsigned int rdtype, unsigned int flags,
+     struct rrsetinfo **res)
+ {
++	if (res != NULL)
++		*res = NULL;
++	return ERRSET_NODATA;
+ 	struct __res_state *_resp = _THREAD_PRIVATE(_res, _res, &_res);
+ 	int result;
+ 	struct rrsetinfo *rrset = NULL;

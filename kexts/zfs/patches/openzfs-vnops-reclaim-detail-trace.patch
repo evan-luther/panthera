@@ -1,0 +1,189 @@
+--- a/module/os/macos/zfs/zfs_vnops_osx.c
++++ b/module/os/macos/zfs/zfs_vnops_osx.c
+@@ -234,8 +234,21 @@ typedef struct panthera_zfs_detail_rmdir_phase {
+ 	volatile uint64_t purge_ns;
+ } panthera_zfs_detail_rmdir_phase_t;
+ 
++typedef struct panthera_zfs_detail_reclaim_phase {
++	volatile uint64_t count;
++	volatile uint64_t sa_null_count;
++	volatile uint64_t unlinked_count;
++	volatile uint64_t total_ns;
++	volatile uint64_t setup_ns;
++	volatile uint64_t clear_ns;
++	volatile uint64_t rwlock_ns;
++	volatile uint64_t zinactive_ns;
++	volatile uint64_t znode_free_ns;
++} panthera_zfs_detail_reclaim_phase_t;
++
+ static panthera_zfs_detail_setattr_phase_t panthera_zfs_detail_setattr_phase;
+ static panthera_zfs_detail_rmdir_phase_t panthera_zfs_detail_rmdir_phase;
++static panthera_zfs_detail_reclaim_phase_t panthera_zfs_detail_reclaim_phase;
+ 
+ static uint64_t
+ panthera_zfs_detail_delta(hrtime_t start, hrtime_t end)
+@@ -342,5 +355,56 @@ panthera_zfs_detail_rmdir_record(int error, uint64_t total_ns,
+ 	}
+ }
++
++static void
++panthera_zfs_detail_reclaim_record(boolean_t sa_null, boolean_t unlinked,
++    uint64_t total_ns, uint64_t setup_ns, uint64_t clear_ns,
++    uint64_t rwlock_ns, uint64_t zinactive_ns, uint64_t znode_free_ns)
++{
++	uint64_t count;
++
++	count = panthera_zfs_detail_inc(
++	    &panthera_zfs_detail_reclaim_phase.count);
++	if (sa_null)
++		panthera_zfs_detail_inc(
++		    &panthera_zfs_detail_reclaim_phase.sa_null_count);
++	if (unlinked)
++		panthera_zfs_detail_inc(
++		    &panthera_zfs_detail_reclaim_phase.unlinked_count);
++	panthera_zfs_detail_add(&panthera_zfs_detail_reclaim_phase.total_ns,
++	    total_ns);
++	panthera_zfs_detail_add(&panthera_zfs_detail_reclaim_phase.setup_ns,
++	    setup_ns);
++	panthera_zfs_detail_add(&panthera_zfs_detail_reclaim_phase.clear_ns,
++	    clear_ns);
++	panthera_zfs_detail_add(&panthera_zfs_detail_reclaim_phase.rwlock_ns,
++	    rwlock_ns);
++	panthera_zfs_detail_add(&panthera_zfs_detail_reclaim_phase.zinactive_ns,
++	    zinactive_ns);
++	panthera_zfs_detail_add(
++	    &panthera_zfs_detail_reclaim_phase.znode_free_ns, znode_free_ns);
++
++	if ((count & 0x3ff) == 0) {
++		printf("PANTHERA:ZFS_DETAIL reclaim count=%llu "
++		    "sa_null=%llu unlinked=%llu total_ms=%llu setup_ms=%llu "
++		    "clear_ms=%llu rwlock_ms=%llu zinactive_ms=%llu "
++		    "znode_free_ms=%llu\n",
++		    (u_longlong_t)count,
++		    (u_longlong_t)panthera_zfs_detail_reclaim_phase.sa_null_count,
++		    (u_longlong_t)panthera_zfs_detail_reclaim_phase.unlinked_count,
++		    (u_longlong_t)panthera_zfs_detail_ms(
++		    panthera_zfs_detail_reclaim_phase.total_ns),
++		    (u_longlong_t)panthera_zfs_detail_ms(
++		    panthera_zfs_detail_reclaim_phase.setup_ns),
++		    (u_longlong_t)panthera_zfs_detail_ms(
++		    panthera_zfs_detail_reclaim_phase.clear_ns),
++		    (u_longlong_t)panthera_zfs_detail_ms(
++		    panthera_zfs_detail_reclaim_phase.rwlock_ns),
++		    (u_longlong_t)panthera_zfs_detail_ms(
++		    panthera_zfs_detail_reclaim_phase.zinactive_ns),
++		    (u_longlong_t)panthera_zfs_detail_ms(
++		    panthera_zfs_detail_reclaim_phase.znode_free_ns));
++	}
++}
+ #endif
+ 
+ #define	DECLARE_CRED(ap) \
+@@ -3348,6 +3412,19 @@ zfs_vnop_reclaim(struct vnop_reclaim_args *ap)
+ 	struct vnode	*vp = ap->a_vp;
+ 	znode_t	*zp = NULL;
+ 	zfsvfs_t *zfsvfs = NULL;
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	hrtime_t phase_start = gethrtime();
++	hrtime_t phase_op_start;
++	uint64_t phase_setup_ns = 0;
++	uint64_t phase_clear_ns = 0;
++	uint64_t phase_rwlock_ns = 0;
++	uint64_t phase_zinactive_ns = 0;
++	uint64_t phase_znode_free_ns = 0;
++	boolean_t phase_sa_null = B_FALSE;
++	boolean_t phase_unlinked = B_FALSE;
++
++	phase_op_start = phase_start;
++#endif
+ 
+ 	/* Destroy the vm object and flush associated pages. */
+ #ifndef __APPLE__
+@@ -3359,38 +3436,73 @@ zfs_vnop_reclaim(struct vnop_reclaim_args *ap)
+ 	ASSERT(zp != NULL);
+ 	dprintf("+vnop_reclaim zp %p/%p type %d\n", zp, vp, vnode_vtype(vp));
+ 	if (!zp) goto out;
+ 
+ 	zfsvfs = zp->z_zfsvfs;
+ 
+ 	if (!zfsvfs) {
+ 		dprintf("ZFS: vnop_reclaim with zfsvfs == NULL\n");
+-		return (0);
++		goto out;
+ 	}
+ 
+ 	if (zfsctl_is_node(vp)) {
+ 		dprintf("ZFS: vnop_reclaim with ctldir node\n");
+-		return (0);
++		goto out;
+ 	}
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	phase_setup_ns += panthera_zfs_detail_delta(phase_op_start,
++	    gethrtime());
++	phase_op_start = gethrtime();
++#endif
+ 
+ 	ZTOV(zp) = NULL;
+ 
+ 	/*
+ 	 * Purge old data structures associated with the denode.
+ 	 */
+ 	vnode_clearfsnode(vp); /* vp->v_data = NULL */
+ 	vnode_removefsref(vp); /* ADDREF from vnode_create */
+ 	atomic_dec_64(&vnop_num_vnodes);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	phase_clear_ns += panthera_zfs_detail_delta(phase_op_start,
++	    gethrtime());
++	phase_sa_null = (zp->z_sa_hdl == NULL);
++	phase_unlinked = (zp->z_unlinked != 0);
++	phase_op_start = gethrtime();
++#endif
+ 
+ 	dprintf("+vnop_reclaim zp %p/%p unlinked %d unmount "
+ 		"%d sa_hdl %p\n", zp, vp, zp->z_unlinked,
+ 	    zfsvfs->z_unmounted, zp->z_sa_hdl);
+ 
+ 	rw_enter(&zfsvfs->z_teardown_inactive_lock, RW_READER);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	phase_rwlock_ns += panthera_zfs_detail_delta(phase_op_start,
++	    gethrtime());
++#endif
+ 	if (zp->z_sa_hdl == NULL) {
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++		phase_op_start = gethrtime();
++#endif
+ 		zfs_znode_free(zp);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++		phase_znode_free_ns += panthera_zfs_detail_delta(
++		    phase_op_start, gethrtime());
++#endif
+ 	} else {
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++		phase_op_start = gethrtime();
++#endif
+ 		zfs_zinactive(zp);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++		phase_zinactive_ns += panthera_zfs_detail_delta(
++		    phase_op_start, gethrtime());
++		phase_op_start = gethrtime();
++#endif
+ 		zfs_znode_free(zp);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++		phase_znode_free_ns += panthera_zfs_detail_delta(
++		    phase_op_start, gethrtime());
++#endif
+ 	}
+ 	rw_exit(&zfsvfs->z_teardown_inactive_lock);
+ 
+@@ -3382,5 +3494,11 @@ zfs_vnop_reclaim(struct vnop_reclaim_args *ap)
+ #endif
+ 
+ out:
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	panthera_zfs_detail_reclaim_record(phase_sa_null, phase_unlinked,
++	    panthera_zfs_detail_delta(phase_start, gethrtime()),
++	    phase_setup_ns, phase_clear_ns, phase_rwlock_ns,
++	    phase_zinactive_ns, phase_znode_free_ns);
++#endif
+ 	return (0);
+ }

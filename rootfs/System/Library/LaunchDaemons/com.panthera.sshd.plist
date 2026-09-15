@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.panthera.sshd</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/sbin/sshd</string>
+		<string>-D</string>
+		<string>-e</string>
+		<string>-f</string>
+		<string>/etc/ssh/sshd_config</string>
+	</array>
+	<key>RunAtLoad</key>
+	<false/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>NetworkState</key>
+        <true/>
+    </dict>
+</dict>
+</plist>

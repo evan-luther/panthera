@@ -1,0 +1,33 @@
+--- a/module/os/macos/zfs/zfs_boot.cpp
++++ b/module/os/macos/zfs/zfs_boot.cpp
+@@ -1883,16 +1883,11 @@
+ 			goto out_unlocked;
+ 		}
+ 
+-		mutex_enter(&pools->lock);
+-		/* Check for work */
+-		if (pools->disks->getCount() != 0) {
+-			dprintf("%s more disks available, looping\n", __func__);
+-			continue;
+-		}
+-		/* Release pool list lock */
+-		mutex_exit(&pools->lock);
+-
+-		/* Generate a list of pool configs to import */
++		/*
++		 * Attempt import after each scan. Mountroot retries can enqueue
++		 * media faster than we probe it; waiting for an empty queue starves
++		 * import. Pending media is processed below if this attempt fails.
++		 */
+ 		configs = zfs_boot_get_configs(pools, B_TRUE);
+ 
+ 		/* Abort early */
+@@ -2179,7 +2174,7 @@
+ 	pools->terminating = ZFS_BOOT_ACTIVE;
+ 
+ 	notifier = IOService::addMatchingNotification(
+-	    gIOFirstPublishNotification, IOService::serviceMatching("IOMedia"),
++	    gIOMatchedNotification, IOService::serviceMatching("IOMedia"),
+ 	    zfs_boot_probe_media, zfs_hl, pools, 0);
+ 
+ 	if (!notifier) {

@@ -1,0 +1,44 @@
+# Panthera third-party and local tarball checksums.
+#
+# Format:
+#   sha256  path
+#
+# Paths are relative to the repository root. This manifest records the inputs
+# currently present in the workspace; it does not by itself prove upstream
+# authenticity. Use tools/verify_third_party_checksums.sh to verify local files.
+
+91321271ee47297a1be3f2f66adfb2874b598a9c72d92a9d7ac800a02e3dd273  userland/libsystem/build/shims/libsystem_c/math/pow.c
+546caf0c6ef9a1ac6fa297868654f7b776b9bb6db06d0a9b49d6f62dc3a58742  userland/libsystem/build/shims/libsystem_c/math/pow_log_data.c
+802718b95a578b4565edf2b9797f0252566263d21d8bc45045a2c379b2ee6a97  userland/libsystem/build/shims/libsystem_c/math/exp_data.c
+ab4c65b274ad60cd2b909fa1bc9f1369486199f47ae3b47feb9b686bcd3899bd  userland/libsystem/build/shims/libsystem_c/math/math_err.c
+2ce224e982c4912fb1d36b198a18e09b9197ad16ea9d117cb71edb5007119907  userland/libsystem/build/shims/libsystem_c/math/math_config.h
+8d85c1057d742e597985c7d4e6320b015a9139385cff4cbae06ffc0ebe89afee  userland/libsystem/build/shims/libsystem_c/math/LICENSE.TXT
+9599b22ecd1d5787ad7d3b7bf0c59f312b3396d1e281175dd1f8a4014da621ff  build/distfiles/bash-5.2.37.tar.gz
+7b1eea90abc767430cd1a612529d5f301c47fd6a35bee7585778c951e891a82c  build/distfiles/bmake-20260508.tar.gz
+ee427e9f2e243594d59baf7ad0fd6f2826427afdcbd3d961ffc7770b24eb69f7  build/distfiles/cctools-1030.6.3-920a2b4.tar.gz
+59badef592dd34893cd319d42b323aaa990b452d05c7180ff20f23ab1b41e837  build/distfiles/cmake-18.1.8.src.tar.xz
+0341f1ed97a26c811abaebd37d62b833956792b7607ea3f15d001613c76de202  build/distfiles/curl-8.12.1.tar.xz
+0a7b085d2988a77df44c94bfe645e18dba7e1615cbfaa485f689f6abb71e7f86  build/distfiles/ld64-264.3.102.tar.gz
+c31577d16978b0da0e472ef751f74893a5b459a7ea4a383b75f7ab93cf1e6877  build/distfiles/libunwind-18.1.8.src.tar.xz
+76f0dcb248f2e2f1251d4ecd20fd30fb400a360a3a37c6c340e0a52c2d1cdedf  build/distfiles/nano-8.7.1.tar.xz
+490426f766d82a2763fcacd8d83ea3d70798750c7bd2aff2e57dc5660f773ffd  build/distfiles/openssh-9.7p1.tar.gz
+b343fbcdbff87f15b1986e6e15d6d4fc9a7d36066be6b7fb507087ba8f966c02  build/distfiles/openssh-9.9p1.tar.gz
+b28c91532a8b65a1f983b4c28b7488174e4a01008e29ce8e69bd789f28bc2a89  build/distfiles/openssl-3.5.5.tar.gz
+982dded08768fad6ab04452ea448261777867070f978ca4af03edb1712c28c1b  build/distfiles/openzfs-fork-zfs-macOS-2.3.1p1.tar.gz
+9997c2e91e5438e2963306ba5019d85b5384b467535632738d8670ced8f07cb3  build/distfiles/runtimes-18.1.8.src.tar.xz
+9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23  build/distfiles/zlib-1.3.1.tar.gz
+21b838b21570625f3fce15cc975e0f049b9bf57380bd66a8e95eb5d90695805b  src/Libc-1583.40.7/gdtoa/gdtoa.tgz
+8dc642c2cde02b2dac6802cdbe2cda201daf79c4ebcbb3ea133915edf1636658  src/Libc-1583.40.7/regex/TRE/tre-0.8.0.tar.bz2
+b9d01349abcb728c3ce29b27be4a059c3aefb711e54075094790ed50a6f412df  src/bash/bash-3.2/examples/complete/bashcc-1.0.1.tar.gz
+82f425f5779cf9f7ba4b659368e52740ce1ce274809e2a8f58b3acc61393bdc1  src/adv_cmds-213.tar.gz
+67c317119b1d147dff89394c562f2c4521618fb77184a38b4f49922ce0a15afa  src/basic_cmds-70.tar.gz
+6a474ac46e8b0b32916c4c60df694c82058d3297d8b385b74508030ca4a8f28a  src/dash-0.5.12.tar.gz
+557fa1719ec984e03c121c0b9683e5337631efd457a7d3981d5f4c8b5d2ec374  src/diskdev_cmds-593.tar.gz
+e78936dffc395f2e0db099321d6be659190966b99712b55c530dd0a1822e0a5e  src/dropbear-2024.86.tar.bz2
+1b82afa97d108873cb0094303a92c0967de0181803f982595b1210be2a7848a2  src/file_cmds-475.tar.gz
+0379e4a73c219f260e6d16adbc2e87635532ebb4c5a83a7399f231dc40108d1f  src/libedit-65/libedit-20121213-3.0.tar.gz
+96151685cec997e1f9f3387e3626d61e6284d4d6e66e0e440c209286c03e9cc7  src/libxml2-39.10/xmlts20080827.tar.gz
+19108658b23b3ec5058edc9f66ac545ea19f9537234be1ec62b714c84399366d  src/pcre-21/pcre-8.44.tar.bz2
+8d36cd8cb6ea2a4c2bb358ff6411b0c788633a2a45dabbf1aeb4b701d1b5e840  src/pcre-21/pcre2-10.42.tar.bz2
+19893f3eb4d35f6891a7899b4fbef3518ac82ce9f5c019053b5ca622e13a18c8  src/shell_cmds-326.tar.gz
+8ce8b985ab6d79134af74e2da9d260b8c482233e5aed6895a38be3c6e645af88  src/text_cmds-197.tar.gz

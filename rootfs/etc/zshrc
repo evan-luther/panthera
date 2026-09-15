@@ -1,0 +1,3 @@
+PS1='%n@panthera:%~%# '
+PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/pkg/bin
+export TERM="${TERM:-vt100}"

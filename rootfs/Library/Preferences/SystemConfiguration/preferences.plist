@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CurrentSet</key>
+  <string>/Sets/PantheraSet</string>
+  <key>NetworkServices</key>
+  <dict>
+    <key>Panthera-en0</key>
+    <dict>
+      <key>Interface</key>
+      <dict>
+        <key>DeviceName</key>
+        <string>en0</string>
+        <key>Hardware</key>
+        <string>Ethernet</string>
+        <key>Type</key>
+        <string>Ethernet</string>
+        <key>UserDefinedName</key>
+        <string>Ethernet</string>
+      </dict>
+      <key>IPv4</key>
+      <dict>
+        <key>ConfigMethod</key>
+        <string>DHCP</string>
+      </dict>
+    </dict>
+  </dict>
+  <key>Sets</key>
+  <dict>
+    <key>PantheraSet</key>
+    <dict>
+      <key>Network</key>
+      <dict>
+        <key>Global</key>
+        <dict>
+          <key>IPv4</key>
+          <dict>
+            <key>ServiceOrder</key>
+            <array>
+              <string>Panthera-en0</string>
+            </array>
+          </dict>
+        </dict>
+        <key>Service</key>
+        <dict>
+          <key>Panthera-en0</key>
+          <dict>
+            <key>__LINK__</key>
+            <string>/NetworkServices/Panthera-en0</string>
+          </dict>
+        </dict>
+      </dict>
+    </dict>
+  </dict>
+</dict>
+</plist>

@@ -1,0 +1,27 @@
+--- CFDictionary.c.orig
++++ CFDictionary.c
+@@ -35,6 +35,12 @@
+ #include "CFInternal.h"
+ #include "CFBasicHash.h"
+ #include <CoreFoundation/CFString.h>
++
++#if defined(PANTHERA)
++extern Boolean __CFInitialized;
++extern Boolean __CFInitializing;
++void __CFInitialize(void);
++#endif
+ 
+ 
+ #define CFDictionary 0
+@@ -283,6 +288,11 @@
+ CFMutableHashRef CFDictionaryCreateMutable(CFAllocatorRef allocator, CFIndex capacity, const CFDictionaryKeyCallBacks *keyCallBacks) {
+     const CFDictionaryValueCallBacks *valueCallBacks = 0;
+ #endif
++#if defined(PANTHERA)
++    if (!__CFInitialized && !__CFInitializing) {
++        __CFInitialize();
++    }
++#endif
+     CFTypeID typeID = CFDictionaryGetTypeID();
+     CFAssert2(0 <= capacity, __kCFLogAssertion, "%s(): capacity (%ld) cannot be less than zero", __PRETTY_FUNCTION__, capacity);
+     CFBasicHashRef ht = __CFDictionaryCreateGeneric(allocator, keyCallBacks, valueCallBacks, CFDictionary);

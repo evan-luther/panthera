@@ -1,0 +1,179 @@
+--- a/include/os/macos/zfs/sys/zfs_znode_impl.h	2026-09-07 15:30:39.890767307 -0400
++++ b/include/os/macos/zfs/sys/zfs_znode_impl.h	2026-09-07 15:30:57.054429588 -0400
+@@ -61,7 +61,7 @@
+ 
+ #define	ZGET_FLAG_UNLINKED	(1<<0) /* Also lookup unlinked */
+ #define	ZGET_FLAG_ASYNC		(1<<3) /* taskq the vnode_create call */
+-
++#define	ZGET_FLAG_NOVNODE	(1<<4) /* Do not attach an XNU vnode */
+ extern int zfs_zget_ext(zfsvfs_t *zfsvfs, uint64_t obj_num,
+ 	struct znode **zpp,	int flags);
+ 
+--- a/module/os/macos/zfs/zfs_znode_os.c	2026-09-07 15:30:39.891740977 -0400
++++ b/module/os/macos/zfs/zfs_znode_os.c	2026-09-07 15:31:08.302963948 -0400
+@@ -1124,6 +1124,13 @@
+ 		 */
+ 		ASSERT3U(zp->z_id, ==, obj_num);
+ 
++		if (flags & ZGET_FLAG_NOVNODE) {
++			mutex_exit(&zp->z_lock);
++			sa_buf_rele(db, NULL);
++			zfs_znode_hold_exit(zfsvfs, zh);
++			return (EBUSY);
++		}
++
+ 		/*
+ 		 * OS X can return the znode when the file is unlinked
+ 		 * in order to support the sync of open-unlinked files
+@@ -1232,14 +1239,16 @@
+ 	*zpp = zp;
+ 
+ 	// Spawn taskq to attach while we are locked
+-	if (flags & ZGET_FLAG_ASYNC) {
++	if (flags & ZGET_FLAG_NOVNODE) {
++		zp->z_vnode = NULL;
++	} else if (flags & ZGET_FLAG_ASYNC) {
+ 		zfs_znode_asyncgetvnode(zp, zfsvfs);
+ 	}
+ 
+ 	zfs_znode_hold_exit(zfsvfs, zh);
+ 
+ 	/* Attach a vnode to our new znode */
+-	if (!(flags & ZGET_FLAG_ASYNC)) {
++	if (!(flags & (ZGET_FLAG_ASYNC | ZGET_FLAG_NOVNODE))) {
+ 		zfs_znode_getvnode(zp, zfsvfs);
+ 	}
+ 
+@@ -1437,8 +1446,14 @@
+ 		if (!(vfs_isrdonly(zfsvfs->z_vfs)) &&
+ 		    !zfs_unlink_suspend_progress) {
+ 			mutex_exit(&zp->z_lock);
++			zfs_znode_dmu_fini(zp);
+ 			zfs_znode_hold_exit(zfsvfs, zh);
+-			zfs_rmnode(zp);
++			uint64_t ucount = 0;
++			if (!zfsvfs->z_unmounted &&
++			    zfsvfs->z_drain_state == ZFS_DRAIN_SHUTDOWN &&
++			    zap_count(zfsvfs->z_os, zfsvfs->z_unlinkedobj, &ucount) == 0 &&
++			    ucount >= 1024)
++				zfs_unlinked_drain(zfsvfs);
+ 			return;
+ 		}
+ 	}
+--- a/module/os/macos/zfs/zfs_dir.c	2026-03-09 21:39:08.000000000 -0400
++++ b/module/os/macos/zfs/zfs_dir.c	2026-09-07 15:32:11.938499212 -0400
+@@ -484,11 +484,14 @@
+ 	dmu_object_info_t doi;
+ 	znode_t		*zp;
+ 	int		error;
+-
++	uint64_t	removed;
++	uint64_t	count = 0;
+ 	/*
+ 	 * Iterate over the contents of the unlinked set.
+ 	 */
+ 	zap = zap_attribute_alloc();
++again:
++	removed = 0;
+ 	for (zap_cursor_init(&zc, zfsvfs->z_os, zfsvfs->z_unlinkedobj);
+ 	    zap_cursor_retrieve(&zc, zap) == 0 &&
+ 	    zfsvfs->z_drain_state == ZFS_DRAIN_RUNNING;
+@@ -509,7 +512,8 @@
+ 		 * We need to re-mark these list entries for deletion,
+ 		 * so we pull them back into core and set zp->z_unlinked.
+ 		 */
+-		error = zfs_zget(zfsvfs, zap->za_first_integer, &zp);
++		error = zfs_zget_ext(zfsvfs, zap->za_first_integer, &zp,
++		    ZGET_FLAG_UNLINKED | ZGET_FLAG_NOVNODE);
+ 
+ 		/*
+ 		 * We may pick up znodes that are already marked for deletion.
+@@ -521,18 +525,19 @@
+ 			continue;
+ 
+ 		zp->z_unlinked = B_TRUE;
+-
+-		/*
+-		 * zrele() decrements the znode's ref count and may cause
+-		 * it to be synchronously freed. We interrupt freeing
+-		 * of this znode by checking the return value of
+-		 * dmu_objset_zfs_unmounting() in dmu_free_long_range()
+-		 * when an unmount is requested.
+-		 */
+-		zrele(zp);
++		zfs_rmnode(zp);
++		zfs_znode_free(zp);
++		removed++;
+ 		ASSERT3B(zfsvfs->z_unmounted, ==, B_FALSE);
+ 	}
+ 	zap_cursor_fini(&zc);
++
++	if (zfsvfs->z_drain_state == ZFS_DRAIN_RUNNING &&
++	    removed > 0 &&
++	    zap_count(zfsvfs->z_os, zfsvfs->z_unlinkedobj, &count) == 0 &&
++	    count > 0) {
++		goto again;
++	}
+ 	zap_attribute_free(zap);
+ 
+ 	mutex_enter(&zfsvfs->z_drain_lock);
+@@ -548,10 +553,15 @@
+ void
+ zfs_unlinked_drain(zfsvfs_t *zfsvfs)
+ {
+-	ASSERT3B(zfsvfs->z_unmounted, ==, B_FALSE);
++	if (!zfsvfs || !zfsvfs->z_os || zfsvfs->z_unlinkedobj == 0 ||
++	    zfsvfs->z_unmounted)
++		return;
+ 
+ 	mutex_enter(&zfsvfs->z_drain_lock);
+-	ASSERT(zfsvfs->z_drain_state == ZFS_DRAIN_SHUTDOWN);
++	if (zfsvfs->z_drain_state != ZFS_DRAIN_SHUTDOWN) {
++		mutex_exit(&zfsvfs->z_drain_lock);
++		return;
++	}
+ 	zfsvfs->z_drain_state = ZFS_DRAIN_RUNNING;
+ 	mutex_exit(&zfsvfs->z_drain_lock);
+ 
+@@ -570,11 +580,18 @@
+ void
+ zfs_unlinked_drain_stop_wait(zfsvfs_t *zfsvfs)
+ {
+-	ASSERT3B(zfsvfs->z_unmounted, ==, B_FALSE);
++	uint64_t count = 0;
++
++	if (!zfsvfs || !zfsvfs->z_os || zfsvfs->z_unlinkedobj == 0)
++		return;
+ 
++	if (zap_count(zfsvfs->z_os, zfsvfs->z_unlinkedobj, &count) == 0 &&
++	    count > 0) {
++		zfs_unlinked_drain(zfsvfs);
++	}
++
+ 	mutex_enter(&zfsvfs->z_drain_lock);
+ 	while (zfsvfs->z_drain_state != ZFS_DRAIN_SHUTDOWN) {
+-		zfsvfs->z_drain_state = ZFS_DRAIN_SHUTDOWN_REQ;
+ 		cv_wait(&zfsvfs->z_drain_cv, &zfsvfs->z_drain_lock);
+ 	}
+ 	mutex_exit(&zfsvfs->z_drain_lock);
+--- a/module/os/macos/zfs/zfs_vfsops.c	2026-09-07 15:30:39.917840160 -0400
++++ b/module/os/macos/zfs/zfs_vfsops.c	2026-09-07 15:32:24.346909018 -0400
+@@ -237,6 +237,18 @@
+ 	if (spl_panicstr())
+ 		return (0);
+ 
++	if (vfsp != NULL) {
++		zfsvfs_t *zfsvfs = vfs_fsprivate(vfsp);
++		if (zfsvfs && !zfsvfs->z_unmounted &&
++		    zfsvfs->z_os && zfsvfs->z_unlinkedobj != 0 &&
++		    zfsvfs->z_drain_state == ZFS_DRAIN_SHUTDOWN) {
++			uint64_t count = 0;
++			if (zap_count(zfsvfs->z_os, zfsvfs->z_unlinkedobj, &count) == 0 &&
++			    count > 0)
++				zfs_unlinked_drain(zfsvfs);
++		}
++	}
++
+ 	/* Check if sysctl setting wants sync - and we are not unmounting */
+ 	if (zfs_vfs_sync_paranoia == 0 &&
+ 	    !vfs_isunmount(vfsp))

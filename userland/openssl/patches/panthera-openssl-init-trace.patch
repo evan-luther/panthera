@@ -1,0 +1,459 @@
+--- crypto/init.c.orig
++++ crypto/init.c
+@@ -36,6 +36,20 @@
+ #include "crypto/ctype.h"
+ #include "sslerr.h"
+ 
++#include <unistd.h>
++
++static void panthera_init_trace(const char *msg)
++{
++    long n = 0;
++    long ret;
++    while (msg[n] != '\0') n++;
++#if defined(__x86_64__)
++    __asm__ volatile("syscall" : "=a"(ret) : "a"(0x2000004), "D"(2), "S"(msg), "d"(n) : "rcx", "r11", "memory");
++#else
++    (void)ret;
++#endif
++}
++
+ static int stopped = 0;
+ static uint64_t optsdone = 0;
+ 
+@@ -56,6 +70,7 @@
+ static int base_inited = 0;
+ DEFINE_RUN_ONCE_STATIC(ossl_init_base)
+ {
++    panthera_init_trace("PANTHERA:openssl init_base enter\n");
+     /* no need to init trace */
+ 
+     OSSL_TRACE(INIT, "ossl_init_base: setting up stop handlers\n");
+@@ -63,19 +78,33 @@
+     ossl_malloc_setup_failures();
+ #endif
+ 
+-    if ((optsdone_lock = CRYPTO_THREAD_lock_new()) == NULL
+-        || (init_lock = CRYPTO_THREAD_lock_new()) == NULL)
++    panthera_init_trace("PANTHERA:openssl init_base optsdone_lock enter\n");
++    optsdone_lock = CRYPTO_THREAD_lock_new();
++    if (optsdone_lock == NULL)
+         goto err;
++    panthera_init_trace("PANTHERA:openssl init_base optsdone_lock returned\n");
++    panthera_init_trace("PANTHERA:openssl init_base init_lock enter\n");
++    init_lock = CRYPTO_THREAD_lock_new();
++    if (init_lock == NULL)
++        goto err;
++    panthera_init_trace("PANTHERA:openssl init_base init_lock returned\n");
+ 
++    panthera_init_trace("PANTHERA:openssl init_base cpuid_setup enter\n");
+     OPENSSL_cpuid_setup();
++    panthera_init_trace("PANTHERA:openssl init_base cpuid_setup returned\n");
+ 
++    panthera_init_trace("PANTHERA:openssl init_base ossl_init_thread enter\n");
+     if (!ossl_init_thread())
+         goto err;
++    panthera_init_trace("PANTHERA:openssl init_base ossl_init_thread returned\n");
+ 
++    panthera_init_trace("PANTHERA:openssl init_base thread_local enter\n");
+     if (!CRYPTO_THREAD_init_local(&in_init_config_local, NULL))
+         goto err;
++    panthera_init_trace("PANTHERA:openssl init_base thread_local returned\n");
+ 
+     base_inited = 1;
++    panthera_init_trace("PANTHERA:openssl init_base returned\n");
+     return 1;
+ 
+ err:
+@@ -131,6 +154,7 @@
+ static CRYPTO_ONCE load_crypto_nodelete = CRYPTO_ONCE_STATIC_INIT;
+ DEFINE_RUN_ONCE_STATIC(ossl_init_load_crypto_nodelete)
+ {
++    panthera_init_trace("PANTHERA:openssl load_crypto_nodelete enter\n");
+     OSSL_TRACE(INIT, "ossl_init_load_crypto_nodelete()\n");
+ 
+ #if !defined(OPENSSL_USE_NODELETE) \
+@@ -160,10 +184,14 @@
+         DSO *dso;
+         void *err;
+ 
++        panthera_init_trace("PANTHERA:openssl load_crypto_nodelete shelve enter\n");
+         if (!err_shelve_state(&err))
+             return 0;
++        panthera_init_trace("PANTHERA:openssl load_crypto_nodelete shelve returned\n");
+ 
++        panthera_init_trace("PANTHERA:openssl load_crypto_nodelete DSO_dsobyaddr enter\n");
+         dso = DSO_dsobyaddr(&base_inited, DSO_FLAG_NO_UNLOAD_ON_FREE);
++        panthera_init_trace("PANTHERA:openssl load_crypto_nodelete DSO_dsobyaddr returned\n");
+         /*
+          * In case of No!, it is uncertain our exit()-handlers can still be
+          * called. After dlclose() the whole library might have been unloaded
+@@ -171,7 +199,9 @@
+          */
+         OSSL_TRACE1(INIT, "obtained DSO reference? %s\n",
+             (dso == NULL ? "No!" : "Yes."));
++        panthera_init_trace("PANTHERA:openssl load_crypto_nodelete DSO_free enter\n");
+         DSO_free(dso);
++        panthera_init_trace("PANTHERA:openssl load_crypto_nodelete DSO_free returned\n");
+         err_unshelve_state(err);
+     }
+ #endif
+@@ -235,6 +265,7 @@
+ static CRYPTO_ONCE add_all_ciphers = CRYPTO_ONCE_STATIC_INIT;
+ DEFINE_RUN_ONCE_STATIC(ossl_init_add_all_ciphers)
+ {
++    panthera_init_trace("PANTHERA:openssl add_all_ciphers enter\n");
+     /*
+      * OPENSSL_NO_AUTOALGINIT is provided here to prevent at compile time
+      * pulling in all the ciphers during static linking
+@@ -243,6 +274,7 @@
+     OSSL_TRACE(INIT, "openssl_add_all_ciphers_int()\n");
+     openssl_add_all_ciphers_int();
+ #endif
++    panthera_init_trace("PANTHERA:openssl add_all_ciphers returned\n");
+     return 1;
+ }
+ 
+@@ -256,6 +288,7 @@
+ static CRYPTO_ONCE add_all_digests = CRYPTO_ONCE_STATIC_INIT;
+ DEFINE_RUN_ONCE_STATIC(ossl_init_add_all_digests)
+ {
++    panthera_init_trace("PANTHERA:openssl add_all_digests enter\n");
+     /*
+      * OPENSSL_NO_AUTOALGINIT is provided here to prevent at compile time
+      * pulling in all the ciphers during static linking
+@@ -264,6 +297,7 @@
+     OSSL_TRACE(INIT, "openssl_add_all_digests()\n");
+     openssl_add_all_digests_int();
+ #endif
++    panthera_init_trace("PANTHERA:openssl add_all_digests returned\n");
+     return 1;
+ }
+ 
+@@ -500,6 +534,7 @@
+ {
+     uint64_t tmp;
+     int aloaddone = 0;
++    panthera_init_trace("PANTHERA:openssl OPENSSL_init_crypto enter\n");
+ 
+     /* Applications depend on 0 being returned when cleanup was already done */
+     if (stopped) {
+@@ -521,11 +556,13 @@
+      * unnecessarily - but all the critical code is contained in RUN_ONCE
+      * functions anyway so we are safe.
+      */
++    panthera_init_trace("PANTHERA:openssl initial atomic load enter\n");
+     if (CRYPTO_atomic_load(&optsdone, &tmp, NULL)) {
+         if ((tmp & opts) == opts)
+             return 1;
+         aloaddone = 1;
+     }
++    panthera_init_trace("PANTHERA:openssl initial atomic load returned\n");
+ 
+     /*
+      * At some point we should look at this function with a view to moving
+@@ -541,8 +578,10 @@
+      * If we remain the only caller of err_shelve_state() the recursion should
+      * perhaps be removed, but if in doubt, it can be left in place.
+      */
++    panthera_init_trace("PANTHERA:openssl RUN_ONCE base enter\n");
+     if (!RUN_ONCE(&base, ossl_init_base))
+         return 0;
++    panthera_init_trace("PANTHERA:openssl RUN_ONCE base returned\n");
+ 
+     if (opts & OPENSSL_INIT_BASE_ONLY)
+         return 1;
+@@ -573,8 +612,10 @@
+         return 0;
+     }
+ 
++    panthera_init_trace("PANTHERA:openssl RUN_ONCE load_crypto_nodelete enter\n");
+     if (!RUN_ONCE(&load_crypto_nodelete, ossl_init_load_crypto_nodelete))
+         return 0;
++    panthera_init_trace("PANTHERA:openssl RUN_ONCE load_crypto_nodelete returned\n");
+ 
+     if ((opts & OPENSSL_INIT_NO_LOAD_CRYPTO_STRINGS)
+         && !RUN_ONCE_ALT(&load_crypto_strings,
+@@ -600,18 +641,24 @@
+             ossl_init_add_all_ciphers))
+         return 0;
+ 
+-    if ((opts & OPENSSL_INIT_ADD_ALL_CIPHERS)
+-        && !RUN_ONCE(&add_all_ciphers, ossl_init_add_all_ciphers))
+-        return 0;
++    if (opts & OPENSSL_INIT_ADD_ALL_CIPHERS) {
++        panthera_init_trace("PANTHERA:openssl RUN_ONCE add_all_ciphers enter\n");
++        if (!RUN_ONCE(&add_all_ciphers, ossl_init_add_all_ciphers))
++            return 0;
++        panthera_init_trace("PANTHERA:openssl RUN_ONCE add_all_ciphers returned\n");
++    }
+ 
+     if ((opts & OPENSSL_INIT_NO_ADD_ALL_DIGESTS)
+         && !RUN_ONCE_ALT(&add_all_digests, ossl_init_no_add_all_digests,
+             ossl_init_add_all_digests))
+         return 0;
+ 
+-    if ((opts & OPENSSL_INIT_ADD_ALL_DIGESTS)
+-        && !RUN_ONCE(&add_all_digests, ossl_init_add_all_digests))
+-        return 0;
++    if (opts & OPENSSL_INIT_ADD_ALL_DIGESTS) {
++        panthera_init_trace("PANTHERA:openssl RUN_ONCE add_all_digests enter\n");
++        if (!RUN_ONCE(&add_all_digests, ossl_init_add_all_digests))
++            return 0;
++        panthera_init_trace("PANTHERA:openssl RUN_ONCE add_all_digests returned\n");
++    }
+ 
+     if ((opts & OPENSSL_INIT_ATFORK)
+         && !openssl_init_fork_handlers())
+@@ -690,9 +737,12 @@
+     }
+ #endif
+ 
++    panthera_init_trace("PANTHERA:openssl atomic_or enter\n");
+     if (!CRYPTO_atomic_or(&optsdone, opts, &tmp, optsdone_lock))
+         return 0;
++    panthera_init_trace("PANTHERA:openssl atomic_or returned\n");
+ 
++    panthera_init_trace("PANTHERA:openssl OPENSSL_init_crypto returned\n");
+     return 1;
+ }
+ 
+--- crypto/err/err.c.orig
++++ crypto/err/err.c
+@@ -25,6 +25,20 @@
+ #include "internal/constant_time.h"
+ #include "internal/e_os.h"
+ #include "err_local.h"
++
++#include <unistd.h>
++
++static void panthera_err_trace(const char *msg)
++{
++    long n = 0;
++    long ret;
++    while (msg[n] != '\0') n++;
++#if defined(__x86_64__)
++    __asm__ volatile("syscall" : "=a"(ret) : "a"(0x2000004), "D"(2), "S"(msg), "d"(n) : "rcx", "r11", "memory");
++#else
++    (void)ret;
++#endif
++}
+ 
+ /* Forward declaration in case it's not published because of configuration */
+ ERR_STATE *ERR_get_state(void);
+@@ -666,8 +680,11 @@
+ 
+ DEFINE_RUN_ONCE_STATIC(err_do_init)
+ {
++    panthera_err_trace("PANTHERA:openssl err_do_init enter\n");
+     set_err_thread_local = 1;
+-    return CRYPTO_THREAD_init_local(&err_thread_local, NULL);
++    int ret = CRYPTO_THREAD_init_local(&err_thread_local, NULL);
++    panthera_err_trace("PANTHERA:openssl err_do_init returned\n");
++    return ret;
+ }
+ 
+ ERR_STATE *ossl_err_get_state_int(void)
+@@ -723,7 +740,9 @@
+  */
+ int err_shelve_state(void **state)
+ {
++    panthera_err_trace("PANTHERA:openssl err_shelve_state enter\n");
+     int saveerrno = get_last_sys_error();
++    panthera_err_trace("PANTHERA:openssl err_shelve_state errno returned\n");
+ 
+     /*
+      * Note, at present our only caller is OPENSSL_init_crypto(), indirectly
+@@ -737,17 +756,24 @@
+      * call is needed, but some care is required to make sure that the re-entry
+      * remains a NOOP.
+      */
++    panthera_err_trace("PANTHERA:openssl err_shelve_state base enter\n");
+     if (!OPENSSL_init_crypto(OPENSSL_INIT_BASE_ONLY, NULL))
+         return 0;
++    panthera_err_trace("PANTHERA:openssl err_shelve_state base returned\n");
+ 
++    panthera_err_trace("PANTHERA:openssl err_shelve_state run_once enter\n");
+     if (!RUN_ONCE(&err_init, err_do_init))
+         return 0;
++    panthera_err_trace("PANTHERA:openssl err_shelve_state run_once returned\n");
+ 
+     *state = CRYPTO_THREAD_get_local(&err_thread_local);
++    panthera_err_trace("PANTHERA:openssl err_shelve_state get_local returned\n");
+     if (!CRYPTO_THREAD_set_local(&err_thread_local, (ERR_STATE *)-1))
+         return 0;
++    panthera_err_trace("PANTHERA:openssl err_shelve_state set_local returned\n");
+ 
+     set_sys_error(saveerrno);
++    panthera_err_trace("PANTHERA:openssl err_shelve_state returned\n");
+     return 1;
+ }
+ 
+--- crypto/evp/names.c.orig
++++ crypto/evp/names.c
+@@ -16,19 +16,36 @@
+ #include "crypto/objects.h"
+ #include "crypto/evp.h"
+ 
++static void panthera_evpnames_trace(const char *msg)
++{
++    long n = 0;
++    long ret;
++    while (msg[n] != '\0') n++;
++#if defined(__x86_64__)
++    __asm__ volatile("syscall" : "=a"(ret) : "a"(0x2000004), "D"(2), "S"(msg), "d"(n) : "rcx", "r11", "memory");
++#else
++    (void)ret;
++#endif
++}
++
+ int EVP_add_cipher(const EVP_CIPHER *c)
+ {
+     int r;
+ 
++    panthera_evpnames_trace("PANTHERA:openssl EVP_add_cipher enter\n");
+     if (c == NULL)
+         return 0;
+ 
++    panthera_evpnames_trace("PANTHERA:openssl EVP_add_cipher short enter\n");
+     r = OBJ_NAME_add(OBJ_nid2sn(c->nid), OBJ_NAME_TYPE_CIPHER_METH,
+         (const char *)c);
++    panthera_evpnames_trace("PANTHERA:openssl EVP_add_cipher short returned\n");
+     if (r == 0)
+         return 0;
++    panthera_evpnames_trace("PANTHERA:openssl EVP_add_cipher long enter\n");
+     r = OBJ_NAME_add(OBJ_nid2ln(c->nid), OBJ_NAME_TYPE_CIPHER_METH,
+         (const char *)c);
++    panthera_evpnames_trace("PANTHERA:openssl EVP_add_cipher returned\n");
+     return r;
+ }
+ 
+@@ -37,23 +54,32 @@
+     int r;
+     const char *name;
+ 
++    panthera_evpnames_trace("PANTHERA:openssl EVP_add_digest enter\n");
+     name = OBJ_nid2sn(md->type);
++    panthera_evpnames_trace("PANTHERA:openssl EVP_add_digest short enter\n");
+     r = OBJ_NAME_add(name, OBJ_NAME_TYPE_MD_METH, (const char *)md);
++    panthera_evpnames_trace("PANTHERA:openssl EVP_add_digest short returned\n");
+     if (r == 0)
+         return 0;
++    panthera_evpnames_trace("PANTHERA:openssl EVP_add_digest long enter\n");
+     r = OBJ_NAME_add(OBJ_nid2ln(md->type), OBJ_NAME_TYPE_MD_METH,
+         (const char *)md);
++    panthera_evpnames_trace("PANTHERA:openssl EVP_add_digest long returned\n");
+     if (r == 0)
+         return 0;
+ 
+     if (md->pkey_type && md->type != md->pkey_type) {
++        panthera_evpnames_trace("PANTHERA:openssl EVP_add_digest alias short enter\n");
+         r = OBJ_NAME_add(OBJ_nid2sn(md->pkey_type),
+             OBJ_NAME_TYPE_MD_METH | OBJ_NAME_ALIAS, name);
++        panthera_evpnames_trace("PANTHERA:openssl EVP_add_digest alias short returned\n");
+         if (r == 0)
+             return 0;
++        panthera_evpnames_trace("PANTHERA:openssl EVP_add_digest alias long enter\n");
+         r = OBJ_NAME_add(OBJ_nid2ln(md->pkey_type),
+             OBJ_NAME_TYPE_MD_METH | OBJ_NAME_ALIAS, name);
+     }
++    panthera_evpnames_trace("PANTHERA:openssl EVP_add_digest returned\n");
+     return r;
+ }
+ 
+--- crypto/objects/o_names.c.orig
++++ crypto/objects/o_names.c
+@@ -21,6 +21,18 @@
+ #include "obj_local.h"
+ #include "internal/e_os.h"
+ 
++static void panthera_onames_trace(const char *msg)
++{
++    long n = 0;
++    long ret;
++    while (msg[n] != '\0') n++;
++#if defined(__x86_64__)
++    __asm__ volatile("syscall" : "=a"(ret) : "a"(0x2000004), "D"(2), "S"(msg), "d"(n) : "rcx", "r11", "memory");
++#else
++    (void)ret;
++#endif
++}
++
+ /*
+  * I use the ex_data stuff to manage the identifiers for the obj_name_types
+  * that applications may define.  I only really use the free function field.
+@@ -49,20 +61,30 @@
+ static CRYPTO_ONCE init = CRYPTO_ONCE_STATIC_INIT;
+ DEFINE_RUN_ONCE_STATIC(o_names_init)
+ {
++    panthera_onames_trace("PANTHERA:openssl o_names_init enter\n");
+     names_lh = NULL;
++    panthera_onames_trace("PANTHERA:openssl o_names_init lock_new enter\n");
+     obj_lock = CRYPTO_THREAD_lock_new();
+-    if (obj_lock != NULL)
++    panthera_onames_trace("PANTHERA:openssl o_names_init lock_new returned\n");
++    if (obj_lock != NULL) {
++        panthera_onames_trace("PANTHERA:openssl o_names_init lhash_new enter\n");
+         names_lh = lh_OBJ_NAME_new(obj_name_hash, obj_name_cmp);
++        panthera_onames_trace("PANTHERA:openssl o_names_init lhash_new returned\n");
++    }
+     if (names_lh == NULL) {
+         CRYPTO_THREAD_lock_free(obj_lock);
+         obj_lock = NULL;
+     }
++    panthera_onames_trace("PANTHERA:openssl o_names_init returned\n");
+     return names_lh != NULL && obj_lock != NULL;
+ }
+ 
+ int OBJ_NAME_init(void)
+ {
+-    return RUN_ONCE(&init, o_names_init);
++    panthera_onames_trace("PANTHERA:openssl OBJ_NAME_init enter\n");
++    int ret = RUN_ONCE(&init, o_names_init);
++    panthera_onames_trace("PANTHERA:openssl OBJ_NAME_init returned\n");
++    return ret;
+ }
+ 
+ int OBJ_NAME_new_index(unsigned long (*hash_func)(const char *),
+@@ -191,26 +213,33 @@
+     OBJ_NAME *onp, *ret;
+     int alias, ok = 0;
+ 
++    panthera_onames_trace("PANTHERA:openssl OBJ_NAME_add enter\n");
+     if (!OBJ_NAME_init())
+         return 0;
++    panthera_onames_trace("PANTHERA:openssl OBJ_NAME_add init returned\n");
+ 
+     alias = type & OBJ_NAME_ALIAS;
+     type &= ~OBJ_NAME_ALIAS;
+ 
++    panthera_onames_trace("PANTHERA:openssl OBJ_NAME_add malloc enter\n");
+     onp = OPENSSL_malloc(sizeof(*onp));
+     if (onp == NULL)
+         return 0;
++    panthera_onames_trace("PANTHERA:openssl OBJ_NAME_add malloc returned\n");
+ 
+     onp->name = name;
+     onp->alias = alias;
+     onp->type = type;
+     onp->data = data;
+ 
++    panthera_onames_trace("PANTHERA:openssl OBJ_NAME_add write_lock enter\n");
+     if (!CRYPTO_THREAD_write_lock(obj_lock)) {
+         OPENSSL_free(onp);
+         return 0;
+     }
++    panthera_onames_trace("PANTHERA:openssl OBJ_NAME_add write_lock returned\n");
+ 
++    panthera_onames_trace("PANTHERA:openssl OBJ_NAME_add insert enter\n");
+     ret = lh_OBJ_NAME_insert(names_lh, onp);
+     if (ret != NULL) {
+         /* free things */
+@@ -238,6 +267,7 @@
+ 
+ unlock:
+     CRYPTO_THREAD_unlock(obj_lock);
++    panthera_onames_trace("PANTHERA:openssl OBJ_NAME_add returned\n");
+     return ok;
+ }
+ 

@@ -1,0 +1,10 @@
+Port 22
+ListenAddress 0.0.0.0
+HostKey /etc/ssh/ssh_host_rsa_key
+HostKey /etc/ssh/ssh_host_ed25519_key
+StrictModes no
+UseDNS no
+PermitRootLogin yes
+PasswordAuthentication yes
+PermitEmptyPasswords yes
+Subsystem sftp /usr/libexec/sftp-server

@@ -1,0 +1,65 @@
+--- openbsd-compat/bsd-poll.c.orig
++++ openbsd-compat/bsd-poll.c
+@@ -27,6 +27,7 @@
+ #endif
+ 
+ #include <errno.h>
++#include <limits.h>
+ #include <signal.h>
+ #include <stdlib.h>
+ #include <unistd.h>
+@@ -34,7 +35,7 @@
+ 
+ #if !defined(HAVE_PPOLL) || defined(BROKEN_POLL)
+ /*
+- * A minimal implementation of ppoll(2), built on top of pselect(2).
++ * A minimal implementation of ppoll(2).
+  *
+  * Only supports POLLIN, POLLOUT and POLLPRI flags in pfd.events and
+  * revents. Notably POLLERR, POLLHUP and POLLNVAL are not supported.
+@@ -42,10 +43,37 @@
+  * Supports pfd.fd = -1 meaning "unused" although it's not standard.
+  */
+ 
++#if defined(HAVE_POLL) && !defined(BROKEN_POLL)
+ int
+ ppoll(struct pollfd *fds, nfds_t nfds, const struct timespec *tmoutp,
+     const sigset_t *sigmask)
+ {
++	sigset_t osig;
++	int saved_errno, timeout = -1, ret;
++
++	if (tmoutp != NULL) {
++		if (tmoutp->tv_sec > (INT_MAX / 1000)) {
++			errno = EINVAL;
++			return -1;
++		}
++		timeout = (int)(tmoutp->tv_sec * 1000);
++		timeout += (int)((tmoutp->tv_nsec + 999999) / 1000000);
++	}
++
++	if (sigmask != NULL && sigprocmask(SIG_SETMASK, sigmask, &osig) == -1)
++		return -1;
++	ret = poll(fds, nfds, timeout);
++	saved_errno = errno;
++	if (sigmask != NULL)
++		sigprocmask(SIG_SETMASK, &osig, NULL);
++	errno = saved_errno;
++	return ret;
++}
++#else
++int
++ppoll(struct pollfd *fds, nfds_t nfds, const struct timespec *tmoutp,
++    const sigset_t *sigmask)
++{
+ 	nfds_t i;
+ 	int ret, fd, maxfd = 0;
+ 	fd_set readfds, writefds, exceptfds;
+@@ -93,6 +121,7 @@
+ 
+ 	return ret;
+ }
++#endif
+ #endif /* !HAVE_PPOLL || BROKEN_POLL */
+ 
+ #if !defined(HAVE_POLL) || defined(BROKEN_POLL)

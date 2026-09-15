@@ -1,0 +1,328 @@
+#!/usr/bin/expect -f
+# Shell functionality tests for Panthera
+# Boots QEMU, waits for prompt, runs tests, captures output
+
+set timeout 120
+set logfile [open "/Users/admin/panthera/tests/shell_tests.log" w]
+
+proc log_msg {msg} {
+    global logfile
+    puts $logfile $msg
+    flush $logfile
+}
+
+log_msg "=== Panthera Shell Tests ==="
+log_msg "Started: [clock format [clock seconds]]"
+
+# Boot QEMU non-graphically
+spawn env PANTHERA_NOGRAPHIC=1 /Users/admin/panthera/boot/qemu/run_phase2_qemu.sh \
+    --no-reboot --ssh-port 0 \
+    --root-disk /Users/admin/panthera/images/qemu/panthera-root.img
+
+log_user 1
+expect_before {
+    timeout {
+        log_msg "TIMEOUT waiting for expected output"
+    }
+}
+
+# Wait for the shell prompt (root@panthera or just #)
+log_msg "Waiting for shell prompt..."
+expect {
+    -re {(%|#)\s*$} {
+        log_msg "Got shell prompt"
+    }
+    timeout {
+        log_msg "TIMEOUT waiting for initial prompt"
+        send_user "\n=== TIMEOUT: No shell prompt after 120s ===\n"
+        exit 1
+    }
+}
+
+# Small delay to let zsh fully initialize
+sleep 2
+
+# ============================================================
+# Test 1: Pipes
+# ============================================================
+log_msg "\n=== TEST 1: Pipes ==="
+send "echo TEST1_START\r"
+expect -re {TEST1_START}
+expect -re {(%|#)\s*$}
+
+send "ls /bin | head -5\r"
+expect {
+    -re {(%|#)\s*$} {
+        log_msg "Test 1a (ls|head) completed"
+    }
+    timeout {
+        log_msg "Test 1a TIMEOUT"
+    }
+}
+
+send "echo hello | cat\r"
+expect {
+    -re {hello} {
+        log_msg "Test 1b (echo|cat) - saw 'hello'"
+    }
+    timeout {
+        log_msg "Test 1b TIMEOUT"
+    }
+}
+expect -re {(%|#)\s*$}
+
+send "echo TEST1_END\r"
+expect -re {TEST1_END}
+expect -re {(%|#)\s*$}
+
+# ============================================================
+# Test 2: Redirection
+# ============================================================
+log_msg "\n=== TEST 2: Redirection ==="
+send "echo TEST2_START\r"
+expect -re {TEST2_START}
+expect -re {(%|#)\s*$}
+
+send "echo hello > /tmp/test && cat /tmp/test\r"
+expect {
+    -re {hello} {
+        log_msg "Test 2a (redirect to /tmp) - saw 'hello'"
+    }
+    -re {No such file|cannot|error|not a directory} {
+        log_msg "Test 2a FAILED - redirect error"
+        # Try fallback
+        send "echo hello > /var/root/test && cat /var/root/test\r"
+        expect {
+            -re {hello} {
+                log_msg "Test 2a-fallback (redirect to /var/root) - saw 'hello'"
+            }
+            timeout {
+                log_msg "Test 2a-fallback TIMEOUT"
+            }
+        }
+    }
+    timeout {
+        log_msg "Test 2a TIMEOUT"
+    }
+}
+expect -re {(%|#)\s*$}
+
+send "echo TEST2_END\r"
+expect -re {TEST2_END}
+expect -re {(%|#)\s*$}
+
+# ============================================================
+# Test 3: Ctrl+C (SIGINT)
+# ============================================================
+log_msg "\n=== TEST 3: Ctrl+C ==="
+send "echo TEST3_START\r"
+expect -re {TEST3_START}
+expect -re {(%|#)\s*$}
+
+send "sleep 999\r"
+sleep 3
+send "\x03"
+expect {
+    -re {(%|#)\s*$} {
+        log_msg "Test 3 (Ctrl+C) - returned to prompt"
+    }
+    timeout {
+        log_msg "Test 3 TIMEOUT - Ctrl+C may not work"
+        # Try sending it again
+        send "\x03"
+        expect -re {(%|#)\s*$}
+    }
+}
+
+send "echo TEST3_END\r"
+expect -re {TEST3_END}
+expect -re {(%|#)\s*$}
+
+# ============================================================
+# Test 4: /dev/null
+# ============================================================
+log_msg "\n=== TEST 4: /dev/null ==="
+send "echo TEST4_START\r"
+expect -re {TEST4_START}
+expect -re {(%|#)\s*$}
+
+send "ls /dev/null 2>&1\r"
+expect {
+    -re {/dev/null} {
+        log_msg "Test 4a - /dev/null exists"
+    }
+    -re {No such file} {
+        log_msg "Test 4a FAILED - /dev/null missing"
+    }
+    timeout {
+        log_msg "Test 4a TIMEOUT"
+    }
+}
+expect -re {(%|#)\s*$}
+
+send "ls /dev/ 2>&1\r"
+expect {
+    -re {(%|#)\s*$} {
+        log_msg "Test 4b - listed /dev/"
+    }
+    timeout {
+        log_msg "Test 4b TIMEOUT"
+    }
+}
+
+send "ls > /dev/null 2>&1 && echo DEVNULL_OK\r"
+expect {
+    -re {DEVNULL_OK} {
+        log_msg "Test 4c - redirect to /dev/null works"
+    }
+    -re {No such file|error} {
+        log_msg "Test 4c FAILED - can't redirect to /dev/null"
+    }
+    timeout {
+        log_msg "Test 4c TIMEOUT"
+    }
+}
+expect -re {(%|#)\s*$}
+
+send "echo TEST4_END\r"
+expect -re {TEST4_END}
+expect -re {(%|#)\s*$}
+
+# ============================================================
+# Test 5: Globbing
+# ============================================================
+log_msg "\n=== TEST 5: Globbing ==="
+send "echo TEST5_START\r"
+expect -re {TEST5_START}
+expect -re {(%|#)\s*$}
+
+send "ls /bin/z*\r"
+expect {
+    -re {/bin/zsh} {
+        log_msg "Test 5 (globbing) - saw /bin/zsh"
+    }
+    -re {no matches} {
+        log_msg "Test 5 FAILED - globbing not working"
+    }
+    timeout {
+        log_msg "Test 5 TIMEOUT"
+    }
+}
+expect -re {(%|#)\s*$}
+
+send "echo TEST5_END\r"
+expect -re {TEST5_END}
+expect -re {(%|#)\s*$}
+
+# ============================================================
+# Test 6: Coreutils traces
+# ============================================================
+log_msg "\n=== TEST 6: Coreutils traces ==="
+send "echo TEST6_START\r"
+expect -re {TEST6_START}
+expect -re {(%|#)\s*$}
+
+send "whoami 2>&1\r"
+expect {
+    -re {(%|#)\s*$} {
+        log_msg "Test 6a (whoami) completed"
+    }
+    timeout {
+        log_msg "Test 6a TIMEOUT"
+    }
+}
+
+send "id 2>&1\r"
+expect {
+    -re {(%|#)\s*$} {
+        log_msg "Test 6b (id) completed"
+    }
+    timeout {
+        log_msg "Test 6b TIMEOUT"
+    }
+}
+
+send "echo TEST6_END\r"
+expect -re {TEST6_END}
+expect -re {(%|#)\s*$}
+
+# ============================================================
+# Test 7: Command substitution
+# ============================================================
+log_msg "\n=== TEST 7: Command substitution ==="
+send "echo TEST7_START\r"
+expect -re {TEST7_START}
+expect -re {(%|#)\s*$}
+
+send "echo \"I am \$(whoami)\"\r"
+expect {
+    -re {I am root} {
+        log_msg "Test 7 (command substitution) - saw 'I am root'"
+    }
+    -re {I am } {
+        log_msg "Test 7 - saw 'I am' but not 'root'"
+    }
+    timeout {
+        log_msg "Test 7 TIMEOUT"
+    }
+}
+expect -re {(%|#)\s*$}
+
+send "echo TEST7_END\r"
+expect -re {TEST7_END}
+expect -re {(%|#)\s*$}
+
+# ============================================================
+# Test 8: Background jobs
+# ============================================================
+log_msg "\n=== TEST 8: Background jobs ==="
+send "echo TEST8_START\r"
+expect -re {TEST8_START}
+expect -re {(%|#)\s*$}
+
+send "sleep 10 &\r"
+expect {
+    -re {(%|#)\s*$} {
+        log_msg "Test 8a (background) - got prompt back"
+    }
+    timeout {
+        log_msg "Test 8a TIMEOUT"
+    }
+}
+
+sleep 1
+send "jobs\r"
+expect {
+    -re {sleep} {
+        log_msg "Test 8b (jobs) - saw sleep in jobs list"
+    }
+    -re {(%|#)\s*$} {
+        log_msg "Test 8b - jobs returned but sleep not listed"
+    }
+    timeout {
+        log_msg "Test 8b TIMEOUT"
+    }
+}
+expect -re {(%|#)\s*$}
+
+send "echo TEST8_END\r"
+expect -re {TEST8_END}
+expect -re {(%|#)\s*$}
+
+# ============================================================
+# Done — send poweroff
+# ============================================================
+log_msg "\n=== ALL TESTS COMPLETE ==="
+send "echo ALL_TESTS_DONE\r"
+expect -re {ALL_TESTS_DONE}
+sleep 1
+
+# Force quit QEMU via monitor
+send "\x01"
+sleep 0.5
+send "x"
+sleep 2
+
+log_msg "Tests finished: [clock format [clock seconds]]"
+close $logfile
+exit 0

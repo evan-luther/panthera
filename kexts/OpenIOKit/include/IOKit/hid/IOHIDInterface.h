@@ -1,0 +1,6 @@
+#ifndef PANTHERA_FORWARD_IOKIT_HID_IOHIDINTERFACE_H
+#define PANTHERA_FORWARD_IOKIT_HID_IOHIDINTERFACE_H
+
+#include "../../../../src/IOHIDFamily-2008.40.6/IOHIDFamily/IOHIDInterface.h"
+
+#endif

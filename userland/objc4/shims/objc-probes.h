@@ -1,0 +1,78 @@
+/* Panthera shim: objc-probes.h
+ * Generated DTrace probe macros — all disabled (no-ops).
+ * Macro names derived from actual usage in objc4-906 source.
+ */
+#ifndef _OBJC_PROBES_H
+#define _OBJC_PROBES_H
+
+#define OBJC_RUNTIME_OBJC_EXCEPTION_THROW(obj)        do {} while(0)
+#define OBJC_RUNTIME_OBJC_EXCEPTION_THROW_ENABLED()   0
+#define OBJC_RUNTIME_OBJC_EXCEPTION_RETHROW()         do {} while(0)
+#define OBJC_RUNTIME_OBJC_EXCEPTION_RETHROW_ENABLED() 0
+
+#define OBJC_RUNTIME_LOAD_IMAGE(name, bundle, hasClassProperties, preoptimized) do {} while(0)
+#define OBJC_RUNTIME_LOAD_IMAGE_ENABLED()             0
+
+#define OBJC_RUNTIME_FIRST_TIME_START()               do {} while(0)
+#define OBJC_RUNTIME_FIRST_TIME_START_ENABLED()       0
+#define OBJC_RUNTIME_FIRST_TIME_END()                 do {} while(0)
+#define OBJC_RUNTIME_FIRST_TIME_END_ENABLED()         0
+
+#define OBJC_RUNTIME_FIXUP_SELECTORS_START()          do {} while(0)
+#define OBJC_RUNTIME_FIXUP_SELECTORS_START_ENABLED()  0
+#define OBJC_RUNTIME_FIXUP_SELECTORS_END()            do {} while(0)
+#define OBJC_RUNTIME_FIXUP_SELECTORS_END_ENABLED()    0
+
+#define OBJC_RUNTIME_DISCOVER_CLASSES_START()          do {} while(0)
+#define OBJC_RUNTIME_DISCOVER_CLASSES_START_ENABLED()  0
+#define OBJC_RUNTIME_DISCOVER_CLASSES_END()            do {} while(0)
+#define OBJC_RUNTIME_DISCOVER_CLASSES_END_ENABLED()    0
+
+#define OBJC_RUNTIME_REMAP_CLASSES_START()             do {} while(0)
+#define OBJC_RUNTIME_REMAP_CLASSES_START_ENABLED()     0
+#define OBJC_RUNTIME_REMAP_CLASSES_END()               do {} while(0)
+#define OBJC_RUNTIME_REMAP_CLASSES_END_ENABLED()       0
+
+#define OBJC_RUNTIME_FIXUP_VTABLES_START()             do {} while(0)
+#define OBJC_RUNTIME_FIXUP_VTABLES_START_ENABLED()     0
+#define OBJC_RUNTIME_FIXUP_VTABLES_END()               do {} while(0)
+#define OBJC_RUNTIME_FIXUP_VTABLES_END_ENABLED()       0
+
+#define OBJC_RUNTIME_DISCOVER_PROTOCOLS_START()        do {} while(0)
+#define OBJC_RUNTIME_DISCOVER_PROTOCOLS_START_ENABLED() 0
+#define OBJC_RUNTIME_DISCOVER_PROTOCOLS_END()          do {} while(0)
+#define OBJC_RUNTIME_DISCOVER_PROTOCOLS_END_ENABLED()  0
+
+#define OBJC_RUNTIME_FIXUP_PROTOCOLS_START()           do {} while(0)
+#define OBJC_RUNTIME_FIXUP_PROTOCOLS_START_ENABLED()   0
+#define OBJC_RUNTIME_FIXUP_PROTOCOLS_END()             do {} while(0)
+#define OBJC_RUNTIME_FIXUP_PROTOCOLS_END_ENABLED()     0
+
+#define OBJC_RUNTIME_DISCOVER_CATEGORIES_START()       do {} while(0)
+#define OBJC_RUNTIME_DISCOVER_CATEGORIES_START_ENABLED() 0
+#define OBJC_RUNTIME_DISCOVER_CATEGORIES_END()         do {} while(0)
+#define OBJC_RUNTIME_DISCOVER_CATEGORIES_END_ENABLED() 0
+
+#define OBJC_RUNTIME_REALIZE_NON_LAZY_CLASSES_START()  do {} while(0)
+#define OBJC_RUNTIME_REALIZE_NON_LAZY_CLASSES_START_ENABLED() 0
+#define OBJC_RUNTIME_REALIZE_NON_LAZY_CLASSES_END()    do {} while(0)
+#define OBJC_RUNTIME_REALIZE_NON_LAZY_CLASSES_END_ENABLED() 0
+
+#define OBJC_RUNTIME_REALIZE_FUTURE_CLASSES_START()    do {} while(0)
+#define OBJC_RUNTIME_REALIZE_FUTURE_CLASSES_START_ENABLED() 0
+#define OBJC_RUNTIME_REALIZE_FUTURE_CLASSES_END()      do {} while(0)
+#define OBJC_RUNTIME_REALIZE_FUTURE_CLASSES_END_ENABLED() 0
+
+#define OBJC_RUNTIME_CACHE_MISS(id, sel, cls)          do {} while(0)
+#define OBJC_RUNTIME_CACHE_MISS_ENABLED()              0
+#define OBJC_RUNTIME_CACHE_FLUSH(cls)                  do {} while(0)
+#define OBJC_RUNTIME_CACHE_FLUSH_ENABLED()             0
+
+#define OBJC_RUNTIME_AUTORELEASE_POOL_PUSH(token)      do {} while(0)
+#define OBJC_RUNTIME_AUTORELEASE_POOL_PUSH_ENABLED()   0
+#define OBJC_RUNTIME_AUTORELEASE_POOL_POP(token)       do {} while(0)
+#define OBJC_RUNTIME_AUTORELEASE_POOL_POP_ENABLED()    0
+#define OBJC_RUNTIME_AUTORELEASE_POOL_GROW(depth)      do {} while(0)
+#define OBJC_RUNTIME_AUTORELEASE_POOL_GROW_ENABLED()   0
+
+#endif /* _OBJC_PROBES_H */

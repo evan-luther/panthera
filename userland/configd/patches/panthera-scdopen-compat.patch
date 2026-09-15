@@ -1,0 +1,67 @@
+--- SystemConfiguration.fproj/SCDOpen.c
++++ SystemConfiguration.fproj/SCDOpen.c
+@@ -147,16 +147,19 @@
+ get_sc_store_max(void)
+ {
+ 	return (_sc_store_max != 0) ? _sc_store_max : N_SESSIONS_WARN_DEFAULT;
+ }
+ 
+ static void
+ add_state_handler(void)
+ {
++#ifdef PANTHERA
++	return;
++#else
+ 	os_state_block_t	state_block;
+ 
+ 	state_block = ^os_state_data_t(os_state_hints_t hints) {
+ #pragma unused(hints)
+ 		CFDataRef		data	= NULL;
+ 		CFMutableDictionaryRef	dict;
+ 		CFIndex			n;
+ 		Boolean			ok;
+@@ -208,16 +211,17 @@
+ 		}
+ 		if (data != NULL) CFRelease(data);
+ 
+ 		return state_data;
+ 	};
+ 
+ 	(void) os_state_add_handler(storeQueue(), state_block);
+ 	return;
++#endif
+ }
+ 
+ 
+ #pragma mark -
+ #pragma mark SCDynamicStore APIs
+ 
+ 
+ void
+@@ -485,17 +489,25 @@
+ 			*status = BOOTSTRAP_UNKNOWN_SERVICE;
+ 		} else {
+ 			*status = bootstrap_look_up_per_user(bootstrap_port, server_name, target_user, &server);
+ 		}
+ 		goto status_switch;
+ 	}
+ #endif	// SCD_HAS_USER_LOOKUP
+ 
+-#if	defined(BOOTSTRAP_PRIVILEGED_SERVER) && !TARGET_OS_SIMULATOR
++#if	defined(PANTHERA)
++	/*
++	 * Panthera's current launchd brings up the root bootstrap namespace, but
++	 * its audit-token handling for BOOTSTRAP_PRIVILEGED_SERVER is not complete
++	 * enough for libbootstrap's privileged-server verification.  Use the same
++	 * bootstrap name and normal lookup until that launchd/audit path is ready.
++	 */
++	*status = bootstrap_look_up(bootstrap_port, server_name, &server);
++#elif	defined(BOOTSTRAP_PRIVILEGED_SERVER) && !TARGET_OS_SIMULATOR
+ 	*status = bootstrap_look_up2(bootstrap_port,
+ 				     server_name,
+ 				     &server,
+ 				     0,
+ 				     BOOTSTRAP_PRIVILEGED_SERVER);
+ #ifdef	DEBUG
+ 	if ((*status != BOOTSTRAP_SUCCESS)
+ 	    && (strcmp(server_name, SCD_SERVER) != 0)

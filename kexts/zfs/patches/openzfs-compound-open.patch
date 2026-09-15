@@ -1,0 +1,197 @@
+diff --git a/module/os/macos/zfs/zfs_vnops_osx.c b/module/os/macos/zfs/zfs_vnops_osx.c
+--- a/module/os/macos/zfs/zfs_vnops_osx.c
++++ b/module/os/macos/zfs/zfs_vnops_osx.c
+@@ -487,6 +487,8 @@
+  * All these functions could be declared as 'static' but to assist with
+  * dtrace debugging, we do not.
+  */
++
++static void zfs_cache_name(struct vnode *vp, struct vnode *dvp, char *filename);
+ 
+ int
+ zfs_vnop_open(struct vnop_open_args *ap)
+@@ -505,9 +507,165 @@
+ 
+ 	if (err) dprintf("zfs_open() failed %d\n", err);
+ 	return (err);
++}
++
++static void
++zfs_vnop_create_attrs_supported(vattr_t *vap)
++{
++	if (VATTR_IS_ACTIVE(vap, va_mode))
++		VATTR_SET_SUPPORTED(vap, va_mode);
++	if (VATTR_IS_ACTIVE(vap, va_data_size))
++		VATTR_SET_SUPPORTED(vap, va_data_size);
++	if (VATTR_IS_ACTIVE(vap, va_type))
++		VATTR_SET_SUPPORTED(vap, va_type);
++	if (VATTR_IS_ACTIVE(vap, va_uid))
++		VATTR_SET_SUPPORTED(vap, va_uid);
++	if (VATTR_IS_ACTIVE(vap, va_gid))
++		VATTR_SET_SUPPORTED(vap, va_gid);
++	if (VATTR_IS_ACTIVE(vap, va_flags))
++		VATTR_SET_SUPPORTED(vap, va_flags);
++	if (VATTR_IS_ACTIVE(vap, va_create_time))
++		VATTR_SET_SUPPORTED(vap, va_create_time);
++	if (VATTR_IS_ACTIVE(vap, va_access_time))
++		VATTR_SET_SUPPORTED(vap, va_access_time);
++	if (VATTR_IS_ACTIVE(vap, va_modify_time))
++		VATTR_SET_SUPPORTED(vap, va_modify_time);
++	if (VATTR_IS_ACTIVE(vap, va_change_time))
++		VATTR_SET_SUPPORTED(vap, va_change_time);
++	if (VATTR_IS_ACTIVE(vap, va_backup_time))
++		VATTR_SET_SUPPORTED(vap, va_backup_time);
++}
++
++static void
++zfs_vnop_log_missing_attrs(const char *func, vattr_t *vap)
++{
++	uint64_t missing;
++
++	missing = (vap->va_active ^ (vap->va_active & vap->va_supported));
++	if (missing != 0) {
++		dprintf("%s: asked %08llx replied %08llx missing %08llx\n",
++		    func, vap->va_active, vap->va_supported, missing);
++	}
+ }
+ 
+ int
++zfs_vnop_compound_open(struct vnop_compound_open_args *ap)
++{
++	struct componentname *cnp = ap->a_cnp;
++	vattr_t *vap = ap->a_vap;
++	DECLARE_CRED(ap);
++	znode_t *zp = NULL;
++	struct vnode *vp = NULL;
++	boolean_t looked_up = B_FALSE;
++	int mode = 0;
++	int error;
++
++	if (ap->a_status != NULL) {
++		*ap->a_status = 0;
++	}
++	if (ap->a_vpp == NULL) {
++		return (EINVAL);
++	}
++
++	if ((ap->a_flags & O_CREAT) && vap == NULL) {
++		return (EINVAL);
++	}
++
++	vp = *ap->a_vpp;
++	if (vp != NULL) {
++		zp = VTOZ(vp);
++		error = 0;
++	} else {
++		error = zfs_lookup(VTOZ(ap->a_dvp), cnp->cn_nameptr, &zp, 0,
++		    cr, NULL, NULL);
++		if (error == 0) {
++			looked_up = B_TRUE;
++			vp = ZTOV(zp);
++			*ap->a_vpp = vp;
++		}
++	}
++	if (error == 0) {
++		if ((ap->a_flags & O_CREAT) &&
++		    (ap->a_fmode & O_EXCL)) {
++			if (looked_up) {
++				zrele(zp);
++				*ap->a_vpp = NULL;
++			}
++			return (EEXIST);
++		}
++		if (ap->a_open_existing_authorizer != NULL) {
++			error = ap->a_open_existing_authorizer(vp, cnp,
++			    ap->a_fmode, ap->a_context, NULL);
++			if (error != 0) {
++				if (looked_up) {
++					zrele(zp);
++					*ap->a_vpp = NULL;
++				}
++				return (error);
++			}
++		}
++		error = zfs_open(vp, ap->a_fmode, 0, cr);
++		if (error != 0) {
++			if (looked_up) {
++				zrele(zp);
++				*ap->a_vpp = NULL;
++			}
++			return (error);
++		}
++		if ((ap->a_fmode & O_TRUNC) && vnode_vtype(vp) == VREG) {
++			error = zfs_freesp(zp, 0, 0, mode, TRUE);
++			if (error != 0) {
++				zfs_close(vp, ap->a_fmode, cr);
++				if (looked_up) {
++					zrele(zp);
++					*ap->a_vpp = NULL;
++				}
++				return (error);
++			}
++		}
++		zfs_cache_name(vp, ap->a_dvp, cnp->cn_nameptr);
++		return (0);
++	}
++
++	if (error != ENOENT || ((ap->a_flags & O_CREAT) == 0)) {
++		return (error);
++	}
++
++	if (ap->a_open_create_authorizer != NULL) {
++		error = ap->a_open_create_authorizer(ap->a_dvp, cnp, vap,
++		    ap->a_context, NULL);
++		if (error != 0) {
++			return (error);
++		}
++	}
++
++	error = zfs_create(VTOZ(ap->a_dvp), cnp->cn_nameptr, vap, EXCL, mode,
++	    &zp, cr, 0, NULL, NULL);
++	if (error != 0) {
++		return (error);
++	}
++
++	zfs_vnop_purge_negatives(ap->a_dvp);
++	vp = ZTOV(zp);
++	*ap->a_vpp = vp;
++	if (ap->a_status != NULL) {
++		*ap->a_status |= COMPOUND_OPEN_STATUS_DID_CREATE;
++	}
++
++	zfs_vnop_create_attrs_supported(vap);
++	zfs_vnop_log_missing_attrs(__func__, vap);
++	vnode_update_identity(vp, NULL, cnp->cn_nameptr, cnp->cn_namelen, 0,
++	    VNODE_UPDATE_NAME);
++	zfs_cache_name(vp, ap->a_dvp, cnp->cn_nameptr);
++
++	error = zfs_open(vp, ap->a_fmode, 0, cr);
++	if (error != 0) {
++		return (error);
++	}
++	return (0);
++}
++
++int
+ zfs_vnop_close(struct vnop_close_args *ap)
+ #if 0
+ 	struct vnop_close_args {
+@@ -4757,6 +4915,7 @@
+ 	{&vnop_default_desc, 	(VOPFUNC)vn_default_error },
+ 	{&vnop_lookup_desc,	(VOPFUNC)zfs_vnop_lookup},
+ 	{&vnop_create_desc,	(VOPFUNC)zfs_vnop_create},
++	{&vnop_compound_open_desc, (VOPFUNC)zfs_vnop_compound_open},
+ 	{&vnop_whiteout_desc,	(VOPFUNC)zfs_vnop_whiteout},
+ 	{&vnop_mknod_desc,	(VOPFUNC)zfs_vnop_mknod},
+ 	{&vnop_open_desc,	(VOPFUNC)zfs_vnop_open},
+diff --git a/module/os/macos/zfs/zfs_vfsops.c b/module/os/macos/zfs/zfs_vfsops.c
+--- a/module/os/macos/zfs/zfs_vfsops.c
++++ b/module/os/macos/zfs/zfs_vfsops.c
+@@ -1073,6 +1073,7 @@
+ 	vfs_setflags(vfsp, (uint64_t)((unsigned int)MNT_DOVOLFS));
+ 	/* Advisory locking should be handled at the VFS layer */
+ 	vfs_setlocklocal(vfsp);
++	vfs_setcompoundopen(vfsp);
+ 
+ 	/*
+ 	 * Record the mount time (for Spotlight)

@@ -1,0 +1,296 @@
+/* cf_aliases.s — Mach-O symbol aliases for CF deprecated names */
+
+.globl _kCFBuddhistCalendar
+.set _kCFBuddhistCalendar, _kCFCalendarIdentifierBuddhist
+
+.globl _kCFChineseCalendar
+.set _kCFChineseCalendar, _kCFCalendarIdentifierChinese
+
+.globl _kCFGregorianCalendar
+.set _kCFGregorianCalendar, _kCFCalendarIdentifierGregorian
+
+.globl _kCFHebrewCalendar
+.set _kCFHebrewCalendar, _kCFCalendarIdentifierHebrew
+
+.globl _kCFISO8601Calendar
+.set _kCFISO8601Calendar, _kCFCalendarIdentifierISO8601
+
+.globl _kCFIndianCalendar
+.set _kCFIndianCalendar, _kCFCalendarIdentifierIndian
+
+.globl _kCFIslamicCalendar
+.set _kCFIslamicCalendar, _kCFCalendarIdentifierIslamic
+
+.globl _kCFIslamicTabularCalendar
+.set _kCFIslamicTabularCalendar, _kCFCalendarIdentifierIslamicTabular
+
+.globl _kCFIslamicUmmAlQuraCalendar
+.set _kCFIslamicUmmAlQuraCalendar, _kCFCalendarIdentifierIslamicUmmAlQura
+
+.globl _kCFIslamicCivilCalendar
+.set _kCFIslamicCivilCalendar, _kCFCalendarIdentifierIslamicCivil
+
+.globl _kCFJapaneseCalendar
+.set _kCFJapaneseCalendar, _kCFCalendarIdentifierJapanese
+
+.globl _kCFPersianCalendar
+.set _kCFPersianCalendar, _kCFCalendarIdentifierPersian
+
+.globl _kCFRepublicOfChinaCalendar
+.set _kCFRepublicOfChinaCalendar, _kCFCalendarIdentifierRepublicOfChina
+
+.globl _kCFLocaleCalendarIdentifier
+.set _kCFLocaleCalendarIdentifier, _kCFLocaleCalendarIdentifierKey
+
+.globl _kCFLocaleCalendar
+.set _kCFLocaleCalendar, _kCFLocaleCalendarKey
+
+.globl _kCFLocaleCollationIdentifier
+.set _kCFLocaleCollationIdentifier, _kCFLocaleCollationIdentifierKey
+
+.globl _kCFLocaleCollatorIdentifier
+.set _kCFLocaleCollatorIdentifier, _kCFLocaleCollatorIdentifierKey
+
+.globl _kCFLocaleCountryCode
+.set _kCFLocaleCountryCode, _kCFLocaleCountryCodeKey
+
+.globl _kCFLocaleCurrencyCode
+.set _kCFLocaleCurrencyCode, _kCFLocaleCurrencyCodeKey
+
+.globl _kCFLocaleCurrencySymbol
+.set _kCFLocaleCurrencySymbol, _kCFLocaleCurrencySymbolKey
+
+.globl _kCFLocaleDecimalSeparator
+.set _kCFLocaleDecimalSeparator, _kCFLocaleDecimalSeparatorKey
+
+.globl _kCFLocaleExemplarCharacterSet
+.set _kCFLocaleExemplarCharacterSet, _kCFLocaleExemplarCharacterSetKey
+
+.globl _kCFLocaleGroupingSeparator
+.set _kCFLocaleGroupingSeparator, _kCFLocaleGroupingSeparatorKey
+
+.globl _kCFLocaleIdentifier
+.set _kCFLocaleIdentifier, _kCFLocaleIdentifierKey
+
+.globl _kCFLocaleLanguageCode
+.set _kCFLocaleLanguageCode, _kCFLocaleLanguageCodeKey
+
+.globl _kCFLocaleMeasurementSystem
+.set _kCFLocaleMeasurementSystem, _kCFLocaleMeasurementSystemKey
+
+.globl _kCFLocaleScriptCode
+.set _kCFLocaleScriptCode, _kCFLocaleScriptCodeKey
+
+.globl _kCFLocaleUsesMetricSystem
+.set _kCFLocaleUsesMetricSystem, _kCFLocaleUsesMetricSystemKey
+
+.globl _kCFLocaleVariantCode
+.set _kCFLocaleVariantCode, _kCFLocaleVariantCodeKey
+
+.globl _kCFDateFormatterAMSymbol
+.set _kCFDateFormatterAMSymbol, _kCFDateFormatterAMSymbolKey
+
+.globl _kCFDateFormatterCalendar
+.set _kCFDateFormatterCalendar, _kCFDateFormatterCalendarKey
+
+.globl _kCFDateFormatterCalendarIdentifier
+.set _kCFDateFormatterCalendarIdentifier, _kCFDateFormatterCalendarIdentifierKey
+
+.globl _kCFDateFormatterDefaultDate
+.set _kCFDateFormatterDefaultDate, _kCFDateFormatterDefaultDateKey
+
+.globl _kCFDateFormatterDefaultFormat
+.set _kCFDateFormatterDefaultFormat, _kCFDateFormatterDefaultFormatKey
+
+.globl _kCFDateFormatterEraSymbols
+.set _kCFDateFormatterEraSymbols, _kCFDateFormatterEraSymbolsKey
+
+.globl _kCFDateFormatterGregorianStartDate
+.set _kCFDateFormatterGregorianStartDate, _kCFDateFormatterGregorianStartDateKey
+
+.globl _kCFDateFormatterIsLenient
+.set _kCFDateFormatterIsLenient, _kCFDateFormatterIsLenientKey
+
+.globl _kCFDateFormatterLongEraSymbols
+.set _kCFDateFormatterLongEraSymbols, _kCFDateFormatterLongEraSymbolsKey
+
+.globl _kCFDateFormatterMonthSymbols
+.set _kCFDateFormatterMonthSymbols, _kCFDateFormatterMonthSymbolsKey
+
+.globl _kCFDateFormatterPMSymbol
+.set _kCFDateFormatterPMSymbol, _kCFDateFormatterPMSymbolKey
+
+.globl _kCFDateFormatterQuarterSymbols
+.set _kCFDateFormatterQuarterSymbols, _kCFDateFormatterQuarterSymbolsKey
+
+.globl _kCFDateFormatterShortMonthSymbols
+.set _kCFDateFormatterShortMonthSymbols, _kCFDateFormatterShortMonthSymbolsKey
+
+.globl _kCFDateFormatterShortQuarterSymbols
+.set _kCFDateFormatterShortQuarterSymbols, _kCFDateFormatterShortQuarterSymbolsKey
+
+.globl _kCFDateFormatterShortStandaloneMonthSymbols
+.set _kCFDateFormatterShortStandaloneMonthSymbols, _kCFDateFormatterShortStandaloneMonthSymbolsKey
+
+.globl _kCFDateFormatterShortStandaloneQuarterSymbols
+.set _kCFDateFormatterShortStandaloneQuarterSymbols, _kCFDateFormatterShortStandaloneQuarterSymbolsKey
+
+.globl _kCFDateFormatterShortStandaloneWeekdaySymbols
+.set _kCFDateFormatterShortStandaloneWeekdaySymbols, _kCFDateFormatterShortStandaloneWeekdaySymbolsKey
+
+.globl _kCFDateFormatterShortWeekdaySymbols
+.set _kCFDateFormatterShortWeekdaySymbols, _kCFDateFormatterShortWeekdaySymbolsKey
+
+.globl _kCFDateFormatterStandaloneMonthSymbols
+.set _kCFDateFormatterStandaloneMonthSymbols, _kCFDateFormatterStandaloneMonthSymbolsKey
+
+.globl _kCFDateFormatterStandaloneQuarterSymbols
+.set _kCFDateFormatterStandaloneQuarterSymbols, _kCFDateFormatterStandaloneQuarterSymbolsKey
+
+.globl _kCFDateFormatterStandaloneWeekdaySymbols
+.set _kCFDateFormatterStandaloneWeekdaySymbols, _kCFDateFormatterStandaloneWeekdaySymbolsKey
+
+.globl _kCFDateFormatterTimeZone
+.set _kCFDateFormatterTimeZone, _kCFDateFormatterTimeZoneKey
+
+.globl _kCFDateFormatterTwoDigitStartDate
+.set _kCFDateFormatterTwoDigitStartDate, _kCFDateFormatterTwoDigitStartDateKey
+
+.globl _kCFDateFormatterVeryShortMonthSymbols
+.set _kCFDateFormatterVeryShortMonthSymbols, _kCFDateFormatterVeryShortMonthSymbolsKey
+
+.globl _kCFDateFormatterVeryShortStandaloneMonthSymbols
+.set _kCFDateFormatterVeryShortStandaloneMonthSymbols, _kCFDateFormatterVeryShortStandaloneMonthSymbolsKey
+
+.globl _kCFDateFormatterVeryShortStandaloneWeekdaySymbols
+.set _kCFDateFormatterVeryShortStandaloneWeekdaySymbols, _kCFDateFormatterVeryShortStandaloneWeekdaySymbolsKey
+
+.globl _kCFDateFormatterVeryShortWeekdaySymbols
+.set _kCFDateFormatterVeryShortWeekdaySymbols, _kCFDateFormatterVeryShortWeekdaySymbolsKey
+
+.globl _kCFDateFormatterWeekdaySymbols
+.set _kCFDateFormatterWeekdaySymbols, _kCFDateFormatterWeekdaySymbolsKey
+
+.globl _kCFNumberFormatterAlwaysShowDecimalSeparator
+.set _kCFNumberFormatterAlwaysShowDecimalSeparator, _kCFNumberFormatterAlwaysShowDecimalSeparatorKey
+
+.globl _kCFNumberFormatterCurrencyCode
+.set _kCFNumberFormatterCurrencyCode, _kCFNumberFormatterCurrencyCodeKey
+
+.globl _kCFNumberFormatterCurrencyDecimalSeparator
+.set _kCFNumberFormatterCurrencyDecimalSeparator, _kCFNumberFormatterCurrencyDecimalSeparatorKey
+
+.globl _kCFNumberFormatterCurrencyGroupingSeparator
+.set _kCFNumberFormatterCurrencyGroupingSeparator, _kCFNumberFormatterCurrencyGroupingSeparatorKey
+
+.globl _kCFNumberFormatterCurrencySymbol
+.set _kCFNumberFormatterCurrencySymbol, _kCFNumberFormatterCurrencySymbolKey
+
+.globl _kCFNumberFormatterDecimalSeparator
+.set _kCFNumberFormatterDecimalSeparator, _kCFNumberFormatterDecimalSeparatorKey
+
+.globl _kCFNumberFormatterDefaultFormat
+.set _kCFNumberFormatterDefaultFormat, _kCFNumberFormatterDefaultFormatKey
+
+.globl _kCFNumberFormatterExponentSymbol
+.set _kCFNumberFormatterExponentSymbol, _kCFNumberFormatterExponentSymbolKey
+
+.globl _kCFNumberFormatterFormatWidth
+.set _kCFNumberFormatterFormatWidth, _kCFNumberFormatterFormatWidthKey
+
+.globl _kCFNumberFormatterGroupingSeparator
+.set _kCFNumberFormatterGroupingSeparator, _kCFNumberFormatterGroupingSeparatorKey
+
+.globl _kCFNumberFormatterGroupingSize
+.set _kCFNumberFormatterGroupingSize, _kCFNumberFormatterGroupingSizeKey
+
+.globl _kCFNumberFormatterInfinitySymbol
+.set _kCFNumberFormatterInfinitySymbol, _kCFNumberFormatterInfinitySymbolKey
+
+.globl _kCFNumberFormatterInternationalCurrencySymbol
+.set _kCFNumberFormatterInternationalCurrencySymbol, _kCFNumberFormatterInternationalCurrencySymbolKey
+
+.globl _kCFNumberFormatterIsLenient
+.set _kCFNumberFormatterIsLenient, _kCFNumberFormatterIsLenientKey
+
+.globl _kCFNumberFormatterMaxFractionDigits
+.set _kCFNumberFormatterMaxFractionDigits, _kCFNumberFormatterMaxFractionDigitsKey
+
+.globl _kCFNumberFormatterMaxIntegerDigits
+.set _kCFNumberFormatterMaxIntegerDigits, _kCFNumberFormatterMaxIntegerDigitsKey
+
+.globl _kCFNumberFormatterMaxSignificantDigits
+.set _kCFNumberFormatterMaxSignificantDigits, _kCFNumberFormatterMaxSignificantDigitsKey
+
+.globl _kCFNumberFormatterMinFractionDigits
+.set _kCFNumberFormatterMinFractionDigits, _kCFNumberFormatterMinFractionDigitsKey
+
+.globl _kCFNumberFormatterMinIntegerDigits
+.set _kCFNumberFormatterMinIntegerDigits, _kCFNumberFormatterMinIntegerDigitsKey
+
+.globl _kCFNumberFormatterMinSignificantDigits
+.set _kCFNumberFormatterMinSignificantDigits, _kCFNumberFormatterMinSignificantDigitsKey
+
+.globl _kCFNumberFormatterMinusSign
+.set _kCFNumberFormatterMinusSign, _kCFNumberFormatterMinusSignKey
+
+.globl _kCFNumberFormatterMultiplier
+.set _kCFNumberFormatterMultiplier, _kCFNumberFormatterMultiplierKey
+
+.globl _kCFNumberFormatterNaNSymbol
+.set _kCFNumberFormatterNaNSymbol, _kCFNumberFormatterNaNSymbolKey
+
+.globl _kCFNumberFormatterNegativePrefix
+.set _kCFNumberFormatterNegativePrefix, _kCFNumberFormatterNegativePrefixKey
+
+.globl _kCFNumberFormatterNegativeSuffix
+.set _kCFNumberFormatterNegativeSuffix, _kCFNumberFormatterNegativeSuffixKey
+
+.globl _kCFNumberFormatterPaddingCharacter
+.set _kCFNumberFormatterPaddingCharacter, _kCFNumberFormatterPaddingCharacterKey
+
+.globl _kCFNumberFormatterPaddingPosition
+.set _kCFNumberFormatterPaddingPosition, _kCFNumberFormatterPaddingPositionKey
+
+.globl _kCFNumberFormatterPerMillSymbol
+.set _kCFNumberFormatterPerMillSymbol, _kCFNumberFormatterPerMillSymbolKey
+
+.globl _kCFNumberFormatterPercentSymbol
+.set _kCFNumberFormatterPercentSymbol, _kCFNumberFormatterPercentSymbolKey
+
+.globl _kCFNumberFormatterPlusSign
+.set _kCFNumberFormatterPlusSign, _kCFNumberFormatterPlusSignKey
+
+.globl _kCFNumberFormatterPositivePrefix
+.set _kCFNumberFormatterPositivePrefix, _kCFNumberFormatterPositivePrefixKey
+
+.globl _kCFNumberFormatterPositiveSuffix
+.set _kCFNumberFormatterPositiveSuffix, _kCFNumberFormatterPositiveSuffixKey
+
+.globl _kCFNumberFormatterRoundingIncrement
+.set _kCFNumberFormatterRoundingIncrement, _kCFNumberFormatterRoundingIncrementKey
+
+.globl _kCFNumberFormatterRoundingMode
+.set _kCFNumberFormatterRoundingMode, _kCFNumberFormatterRoundingModeKey
+
+.globl _kCFNumberFormatterSecondaryGroupingSize
+.set _kCFNumberFormatterSecondaryGroupingSize, _kCFNumberFormatterSecondaryGroupingSizeKey
+
+.globl _kCFNumberFormatterUseGroupingSeparator
+.set _kCFNumberFormatterUseGroupingSeparator, _kCFNumberFormatterUseGroupingSeparatorKey
+
+.globl _kCFNumberFormatterUseSignificantDigits
+.set _kCFNumberFormatterUseSignificantDigits, _kCFNumberFormatterUseSignificantDigitsKey
+
+.globl _kCFNumberFormatterZeroSymbol
+.set _kCFNumberFormatterZeroSymbol, _kCFNumberFormatterZeroSymbolKey
+
+.globl _kCFNumberFormatterUsesCharacterDirection
+.set _kCFNumberFormatterUsesCharacterDirection, _kCFNumberFormatterUsesCharacterDirectionKey
+
+.globl _kCFDateFormatterUsesCharacterDirection
+.set _kCFDateFormatterUsesCharacterDirection, _kCFDateFormatterUsesCharacterDirectionKey
+
+.globl _kCFDateFormatterCalendarName
+.set _kCFDateFormatterCalendarName, _kCFDateFormatterCalendarIdentifierKey
+

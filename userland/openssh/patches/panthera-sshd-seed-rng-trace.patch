@@ -1,0 +1,83 @@
+--- entropy.c.orig
++++ entropy.c
+@@ -51,6 +51,30 @@
+ #include "sshbuf.h"
+ #include "ssherr.h"
+ 
++static void
++panthera_seed_trace(const char *message)
++{
++	size_t len = 0;
++#if defined(__x86_64__)
++	long ret;
++#endif
++	if (message == NULL)
++		return;
++	while (message[len] != '\0')
++		len++;
++#if defined(__x86_64__)
++	__asm__ volatile("syscall" : "=a"(ret)
++	    : "a"(0x2000004), "D"(STDERR_FILENO), "S"(message), "d"(len)
++	    : "rcx", "r11", "memory");
++	__asm__ volatile("syscall" : "=a"(ret)
++	    : "a"(0x2000004), "D"(STDERR_FILENO), "S"("\n"), "d"(1)
++	    : "rcx", "r11", "memory");
++#else
++	(void)write(STDERR_FILENO, message, len);
++	(void)write(STDERR_FILENO, "\n", 1);
++#endif
++}
++
+ /*
+  * Portable OpenSSH PRNG seeding:
+  * If OpenSSL has not "internally seeded" itself (e.g. pulled data from
+@@ -63,31 +72,47 @@
+ {
+ 	unsigned char buf[RANDOM_SEED_SIZE];
+ 
++	panthera_seed_trace("PANTHERA:sshd seed ssh_libcrypto_init enter");
+ 	/* Initialise libcrypto */
+ 	ssh_libcrypto_init();
++	panthera_seed_trace("PANTHERA:sshd seed ssh_libcrypto_init returned");
+ 
++	panthera_seed_trace("PANTHERA:sshd seed openssl version check enter");
+ 	if (!ssh_compatible_openssl(OPENSSL_VERSION_NUMBER,
+ 	    OpenSSL_version_num()))
+ 		fatal("OpenSSL version mismatch. Built against %lx, you "
+ 		    "have %lx", (u_long)OPENSSL_VERSION_NUMBER,
+ 		    OpenSSL_version_num());
++	panthera_seed_trace("PANTHERA:sshd seed openssl version check returned");
+ 
+ #ifndef OPENSSL_PRNG_ONLY
+-	if (RAND_status() == 1)
++	panthera_seed_trace("PANTHERA:sshd seed RAND_status initial enter");
++	if (RAND_status() == 1) {
++		panthera_seed_trace("PANTHERA:sshd seed RAND_status initial ready");
+ 		debug3("RNG is ready, skipping seeding");
+-	else {
++	} else {
++		panthera_seed_trace("PANTHERA:sshd seed RAND_status initial not-ready");
++		panthera_seed_trace("PANTHERA:sshd seed seed_from_prngd enter");
+ 		if (seed_from_prngd(buf, sizeof(buf)) == -1)
+ 			fatal("Could not obtain seed from PRNGd");
++		panthera_seed_trace("PANTHERA:sshd seed seed_from_prngd returned");
++		panthera_seed_trace("PANTHERA:sshd seed RAND_add enter");
+ 		RAND_add(buf, sizeof(buf), sizeof(buf));
++		panthera_seed_trace("PANTHERA:sshd seed RAND_add returned");
+ 	}
+ #endif /* OPENSSL_PRNG_ONLY */
+ 
++	panthera_seed_trace("PANTHERA:sshd seed RAND_status final enter");
+ 	if (RAND_status() != 1)
+ 		fatal("PRNG is not seeded");
++	panthera_seed_trace("PANTHERA:sshd seed RAND_status final ready");
+ 
+ 	/* Ensure arc4random() is primed */
++	panthera_seed_trace("PANTHERA:sshd seed arc4random_buf enter");
+ 	arc4random_buf(buf, sizeof(buf));
++	panthera_seed_trace("PANTHERA:sshd seed arc4random_buf returned");
+ 	explicit_bzero(buf, sizeof(buf));
++	panthera_seed_trace("PANTHERA:sshd seed explicit_bzero returned");
+ }
+ 
+ #else /* WITH_OPENSSL */

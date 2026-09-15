@@ -1,0 +1,300 @@
+--- a/module/os/macos/zfs/zfs_vnops_osx.c
++++ b/module/os/macos/zfs/zfs_vnops_osx.c
+@@ -210,7 +210,147 @@
+ 	}
+ }
+ #endif
++
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++typedef struct panthera_zfs_detail_setattr_phase {
++	volatile uint64_t count;
++	volatile uint64_t errors;
++	volatile uint64_t total_ns;
++	volatile uint64_t mode_lookup_ns;
++	volatile uint64_t flags_ns;
++	volatile uint64_t core_ns;
++	volatile uint64_t support_ns;
++	volatile uint64_t mode_count;
++	volatile uint64_t time_count;
++	volatile uint64_t size_count;
++	volatile uint64_t uidgid_count;
++} panthera_zfs_detail_setattr_phase_t;
++
++typedef struct panthera_zfs_detail_rmdir_phase {
++	volatile uint64_t count;
++	volatile uint64_t errors;
++	volatile uint64_t total_ns;
++	volatile uint64_t core_ns;
++	volatile uint64_t purge_ns;
++} panthera_zfs_detail_rmdir_phase_t;
++
++static panthera_zfs_detail_setattr_phase_t panthera_zfs_detail_setattr_phase;
++static panthera_zfs_detail_rmdir_phase_t panthera_zfs_detail_rmdir_phase;
++
++static uint64_t
++panthera_zfs_detail_delta(hrtime_t start, hrtime_t end)
++{
++	return (end > start ? (uint64_t)(end - start) : 0);
++}
++
++static void
++panthera_zfs_detail_add(volatile uint64_t *counter, uint64_t value)
++{
++	atomic_add_64(counter, value);
++}
++
++static uint64_t
++panthera_zfs_detail_inc(volatile uint64_t *counter)
++{
++	return (atomic_add_64_nv(counter, 1));
++}
++
++static uint64_t
++panthera_zfs_detail_ms(uint64_t ns)
++{
++	return (ns / 1000000ULL);
++}
++
++static void
++panthera_zfs_detail_setattr_record(int error, uint64_t mask,
++    uint64_t total_ns, uint64_t mode_lookup_ns, uint64_t flags_ns,
++    uint64_t core_ns, uint64_t support_ns)
++{
++	uint64_t count;
+ 
++	count = panthera_zfs_detail_inc(&panthera_zfs_detail_setattr_phase.count);
++	if (error != 0)
++		panthera_zfs_detail_inc(
++		    &panthera_zfs_detail_setattr_phase.errors);
++	if (mask & ATTR_MODE)
++		panthera_zfs_detail_inc(
++		    &panthera_zfs_detail_setattr_phase.mode_count);
++	if (mask & (ATTR_ATIME | ATTR_MTIME))
++		panthera_zfs_detail_inc(
++		    &panthera_zfs_detail_setattr_phase.time_count);
++	if (mask & ATTR_SIZE)
++		panthera_zfs_detail_inc(
++		    &panthera_zfs_detail_setattr_phase.size_count);
++	if (mask & (ATTR_UID | ATTR_GID))
++		panthera_zfs_detail_inc(
++		    &panthera_zfs_detail_setattr_phase.uidgid_count);
++	panthera_zfs_detail_add(&panthera_zfs_detail_setattr_phase.total_ns,
++	    total_ns);
++	panthera_zfs_detail_add(
++	    &panthera_zfs_detail_setattr_phase.mode_lookup_ns,
++	    mode_lookup_ns);
++	panthera_zfs_detail_add(&panthera_zfs_detail_setattr_phase.flags_ns,
++	    flags_ns);
++	panthera_zfs_detail_add(&panthera_zfs_detail_setattr_phase.core_ns,
++	    core_ns);
++	panthera_zfs_detail_add(&panthera_zfs_detail_setattr_phase.support_ns,
++	    support_ns);
++
++	if ((count & 0xfff) == 0) {
++		printf("PANTHERA:ZFS_DETAIL setattr count=%llu errors=%llu "
++		    "mode_ops=%llu time_ops=%llu size_ops=%llu uidgid_ops=%llu "
++		    "total_ms=%llu mode_lookup_ms=%llu flags_ms=%llu "
++		    "core_ms=%llu support_ms=%llu\n",
++		    (u_longlong_t)count,
++		    (u_longlong_t)panthera_zfs_detail_setattr_phase.errors,
++		    (u_longlong_t)panthera_zfs_detail_setattr_phase.mode_count,
++		    (u_longlong_t)panthera_zfs_detail_setattr_phase.time_count,
++		    (u_longlong_t)panthera_zfs_detail_setattr_phase.size_count,
++		    (u_longlong_t)panthera_zfs_detail_setattr_phase.uidgid_count,
++		    (u_longlong_t)panthera_zfs_detail_ms(
++		    panthera_zfs_detail_setattr_phase.total_ns),
++		    (u_longlong_t)panthera_zfs_detail_ms(
++		    panthera_zfs_detail_setattr_phase.mode_lookup_ns),
++		    (u_longlong_t)panthera_zfs_detail_ms(
++		    panthera_zfs_detail_setattr_phase.flags_ns),
++		    (u_longlong_t)panthera_zfs_detail_ms(
++		    panthera_zfs_detail_setattr_phase.core_ns),
++		    (u_longlong_t)panthera_zfs_detail_ms(
++		    panthera_zfs_detail_setattr_phase.support_ns));
++	}
++}
++
++static void
++panthera_zfs_detail_rmdir_record(int error, uint64_t total_ns,
++    uint64_t core_ns, uint64_t purge_ns)
++{
++	uint64_t count;
++
++	count = panthera_zfs_detail_inc(&panthera_zfs_detail_rmdir_phase.count);
++	if (error != 0)
++		panthera_zfs_detail_inc(&panthera_zfs_detail_rmdir_phase.errors);
++	panthera_zfs_detail_add(&panthera_zfs_detail_rmdir_phase.total_ns,
++	    total_ns);
++	panthera_zfs_detail_add(&panthera_zfs_detail_rmdir_phase.core_ns,
++	    core_ns);
++	panthera_zfs_detail_add(&panthera_zfs_detail_rmdir_phase.purge_ns,
++	    purge_ns);
++
++	if ((count & 0x3ff) == 0) {
++		printf("PANTHERA:ZFS_DETAIL rmdir count=%llu errors=%llu "
++		    "total_ms=%llu core_ms=%llu purge_ms=%llu\n",
++		    (u_longlong_t)count,
++		    (u_longlong_t)panthera_zfs_detail_rmdir_phase.errors,
++		    (u_longlong_t)panthera_zfs_detail_ms(
++		    panthera_zfs_detail_rmdir_phase.total_ns),
++		    (u_longlong_t)panthera_zfs_detail_ms(
++		    panthera_zfs_detail_rmdir_phase.core_ns),
++		    (u_longlong_t)panthera_zfs_detail_ms(
++		    panthera_zfs_detail_rmdir_phase.purge_ns));
++	}
++}
++#endif
++
+ #define	DECLARE_CRED(ap) \
+ 	cred_t *cr = (cred_t *)vfs_context_ucred((ap)->a_context)
+ #define	DECLARE_CONTEXT(ap) \
+@@ -2030,6 +2170,12 @@
+ //	DECLARE_CRED_AND_CONTEXT(ap);
+ 	DECLARE_CRED(ap);
+ 	int error;
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	hrtime_t phase_start = gethrtime();
++	hrtime_t phase_op_start;
++	uint64_t phase_core_ns = 0;
++	uint64_t phase_purge_ns = 0;
++#endif
+ 
+ 	dprintf("vnop_rmdir\n");
+ 
+@@ -2037,14 +2183,34 @@
+ 	 * extern int zfs_rmdir(struct vnode *dvp, char *name,
+ 	 *     struct vnode *cwd, cred_t *cr, caller_context_t *ct, int flags);
+ 	 */
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	phase_op_start = gethrtime();
++#endif
+ 	error = zfs_rmdir(VTOZ(ap->a_dvp), ap->a_cnp->cn_nameptr,
+ 		/* cwd */NULL, cr, /* flags */0);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	phase_core_ns += panthera_zfs_detail_delta(phase_op_start,
++	    gethrtime());
++#endif
+ 	if (!error) {
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++		phase_op_start = gethrtime();
++#endif
+ 		cache_purge(ap->a_vp);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++		phase_purge_ns += panthera_zfs_detail_delta(phase_op_start,
++		    gethrtime());
++#endif
+ 	} else {
+ 		dprintf("%s error %d\n", __func__, error);
+ 	}
+ 
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	panthera_zfs_detail_rmdir_record(error,
++	    panthera_zfs_detail_delta(phase_start, gethrtime()),
++	    phase_core_ns, phase_purge_ns);
++#endif
++
+ 	return (error);
+ }
+ 
+@@ -2184,6 +2350,15 @@
+ 	znode_t *zp = VTOZ(ap->a_vp);
+ 	vattr_t *vap = ap->a_vap;
+ 	xvattr_t xva; /* va_flags */
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	uint64_t phase_original_mask = vap->va_mask;
++	hrtime_t phase_start = gethrtime();
++	hrtime_t phase_op_start;
++	uint64_t phase_mode_lookup_ns = 0;
++	uint64_t phase_flags_ns = 0;
++	uint64_t phase_core_ns = 0;
++	uint64_t phase_support_ns = 0;
++#endif
+ 
+ 	if (VATTR_IS_ACTIVE(vap, va_access_time)) {
+ 		ZFS_TIME_ENCODE(&vap->va_access_time, zp->z_atime);
+@@ -2197,6 +2372,9 @@
+ 	    !VATTR_IS_ACTIVE(vap, va_mode)) {
+ 		uint64_t mode;
+ 
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++		phase_op_start = gethrtime();
++#endif
+ 		dprintf("fetching MODE for FLAGS or ACL\n");
+ 
+ 		if ((error = zfs_enter_verify_zp(zp->z_zfsvfs, zp, FTAG)) != 0)
+@@ -2208,8 +2386,15 @@
+ 		VATTR_WANTED(vap, va_mode);
+ 
+ 		zfs_exit(zp->z_zfsvfs, FTAG);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++		phase_mode_lookup_ns += panthera_zfs_detail_delta(
++		    phase_op_start, gethrtime());
++#endif
+ 	}
+ 	if (VATTR_IS_ACTIVE(vap, va_flags)) {
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++		phase_op_start = gethrtime();
++#endif
+ 
+ 		/*
+ 		 * If TRACKED is wanted, and not previously set,
+@@ -2262,6 +2447,10 @@
+ 			xva.xva_vattr.va_mask |= ATTR_XVATTR;
+ 			vap = (vattr_t *)&xva;
+ 		}
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++		phase_flags_ns += panthera_zfs_detail_delta(phase_op_start,
++		    gethrtime());
++#endif
+ 	}
+ 
+ 	/*
+@@ -2284,14 +2473,24 @@
+ 
+ 	}
+ 
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	phase_op_start = gethrtime();
++#endif
+ 	error = zfs_setattr(VTOZ(ap->a_vp), vap, /* flag */0, cr,
+ 	    NULL);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	phase_core_ns += panthera_zfs_detail_delta(phase_op_start,
++	    gethrtime());
++#endif
+ 
+ 	dprintf("vnop_setattr: called on vp %p with mask %llx, err=%d\n",
+ 	    ap->a_vp, vap->va_mask, error);
+ 
+ 	if (!error) {
+ 		/* If successful, tell OS X which fields ZFS set. */
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++		phase_op_start = gethrtime();
++#endif
+ 		if (VATTR_IS_ACTIVE(vap, va_data_size)) {
+ 			dprintf("ZFS: setattr new size %llx %llx\n",
+ 			    vap->va_size, ubc_getsize(ap->a_vp));
+@@ -2324,6 +2523,10 @@
+ 			vap = ap->a_vap;
+ 			memcpy(vap, &xva.xva_vattr, sizeof (vattr_t));
+ 		}
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++		phase_support_ns += panthera_zfs_detail_delta(phase_op_start,
++		    gethrtime());
++#endif
+ 
+ 		/*
+ 		 * If we are told to ignore owners, we scribble over the uid
+@@ -2350,6 +2553,12 @@
+ 
+ 	if (error)
+ 		dprintf("ZFS: vnop_setattr return failure %d\n", error);
++#ifdef PANTHERA_ZFS_VNOPS_DETAIL_TRACE
++	panthera_zfs_detail_setattr_record(error, phase_original_mask,
++	    panthera_zfs_detail_delta(phase_start, gethrtime()),
++	    phase_mode_lookup_ns, phase_flags_ns, phase_core_ns,
++	    phase_support_ns);
++#endif
+ 	return (error);
+ }
+ 

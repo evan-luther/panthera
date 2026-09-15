@@ -1,0 +1,56 @@
+#!/usr/bin/expect -f
+set timeout 90
+
+spawn env PANTHERA_NOGRAPHIC=1 /Users/admin/panthera/boot/qemu/run_phase2_qemu.sh \
+    --no-reboot --ssh-port 0 \
+    --root-disk /Users/admin/panthera/images/qemu/panthera-root.img
+
+expect -re {(%|#)\s*$}
+sleep 2
+
+# Test 1: Can zsh receive SIGINT at all?
+send_user "\n=== DIAG1: kill -INT \$\$ ===\n"
+send "trap 'echo SIGNAL_RECEIVED' INT\r"
+expect -re {(%|#)\s*$}
+send "kill -INT \$\$\r"
+expect {
+    -re {SIGNAL_RECEIVED} { send_user ">>> SIGINT DELIVERY WORKS <<<\n" }
+    timeout { send_user ">>> SIGINT NOT RECEIVED <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+# Test 2: Does Ctrl+C generate SIGINT with trap?
+send_user "\n=== DIAG2: Ctrl+C with trap ===\n"
+send "trap 'echo CTRLC_CAUGHT' INT\r"
+expect -re {(%|#)\s*$}
+send "cat\r"
+sleep 2
+send "\x03"
+expect {
+    -re {CTRLC_CAUGHT} { send_user ">>> CTRL+C SIGINT WORKS <<<\n" }
+    -re {(%|#)\s*$} { send_user ">>> CTRL+C: got prompt (no trap msg) <<<\n" }
+    timeout { send_user ">>> CTRL+C: TIMEOUT <<<\n" }
+}
+expect -re {(%|#)\s*$}
+
+# Test 3: Clean whoami/id output
+send_user "\n=== DIAG3: Coreutils traces ===\n"
+send "whoami\r"
+expect -re {(%|#)\s*$}
+send "id\r"
+expect -re {(%|#)\s*$}
+send "/bin/echo test123\r"
+expect -re {(%|#)\s*$}
+
+# Test 4: Command substitution
+send_user "\n=== DIAG4: Command subst ===\n"
+send "echo \"I am \$(whoami)\"\r"
+expect -re {(%|#)\s*$}
+
+send_user "\n=== DONE ===\n"
+sleep 1
+send "\x01"
+sleep 0.5
+send "x"
+sleep 2
+exit 0

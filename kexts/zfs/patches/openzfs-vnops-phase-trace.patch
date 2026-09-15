@@ -1,0 +1,818 @@
+--- a/module/os/macos/zfs/zfs_vnops_os.c	2026-03-09 21:39:08
++++ b/module/os/macos/zfs/zfs_vnops_os.c	2026-05-30 11:32:37
+@@ -73,7 +73,193 @@
+ #include <sys/utfconv.h>
+ 
+ int zfs_vnop_force_formd_normalized_output = 0; /* disabled by default */
++
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++typedef struct panthera_zfs_create_phase {
++	volatile uint64_t count;
++	volatile uint64_t errors;
++	volatile uint64_t total_ns;
++	volatile uint64_t dirlock_ns;
++	volatile uint64_t access_ns;
++	volatile uint64_t acl_ns;
++	volatile uint64_t txhold_ns;
++	volatile uint64_t txassign_ns;
++	volatile uint64_t txwait_ns;
++	volatile uint64_t mknode_ns;
++	volatile uint64_t link_ns;
++	volatile uint64_t commit_ns;
++	volatile uint64_t vnode_ns;
++} panthera_zfs_create_phase_t;
++
++typedef struct panthera_zfs_remove_phase {
++	volatile uint64_t count;
++	volatile uint64_t errors;
++	volatile uint64_t total_ns;
++	volatile uint64_t dirlock_ns;
++	volatile uint64_t access_ns;
++	volatile uint64_t txhold_ns;
++	volatile uint64_t txassign_ns;
++	volatile uint64_t txwait_ns;
++	volatile uint64_t link_ns;
++	volatile uint64_t unlinked_ns;
++	volatile uint64_t commit_ns;
++	volatile uint64_t release_ns;
++} panthera_zfs_remove_phase_t;
++
++static panthera_zfs_create_phase_t panthera_zfs_create_phase;
++static panthera_zfs_remove_phase_t panthera_zfs_remove_phase;
++
++static uint64_t
++panthera_zfs_phase_delta(hrtime_t start, hrtime_t end)
++{
++	return (end > start ? (uint64_t)(end - start) : 0);
++}
++
++static void
++panthera_zfs_phase_add(volatile uint64_t *counter, uint64_t value)
++{
++	atomic_add_64(counter, value);
++}
++
++static uint64_t
++panthera_zfs_phase_inc(volatile uint64_t *counter)
++{
++	return (atomic_add_64_nv(counter, 1));
++}
++
++static uint64_t
++panthera_zfs_phase_ms(uint64_t ns)
++{
++	return (ns / 1000000ULL);
++}
++
++static void
++panthera_zfs_create_phase_record(int error, uint64_t total_ns,
++    uint64_t dirlock_ns, uint64_t access_ns, uint64_t acl_ns,
++    uint64_t txhold_ns, uint64_t txassign_ns, uint64_t txwait_ns,
++    uint64_t mknode_ns, uint64_t link_ns, uint64_t commit_ns,
++    uint64_t vnode_ns)
++{
++	uint64_t count;
++
++	count = panthera_zfs_phase_inc(&panthera_zfs_create_phase.count);
++	if (error != 0)
++		panthera_zfs_phase_inc(&panthera_zfs_create_phase.errors);
++	panthera_zfs_phase_add(&panthera_zfs_create_phase.total_ns, total_ns);
++	panthera_zfs_phase_add(&panthera_zfs_create_phase.dirlock_ns,
++	    dirlock_ns);
++	panthera_zfs_phase_add(&panthera_zfs_create_phase.access_ns,
++	    access_ns);
++	panthera_zfs_phase_add(&panthera_zfs_create_phase.acl_ns, acl_ns);
++	panthera_zfs_phase_add(&panthera_zfs_create_phase.txhold_ns,
++	    txhold_ns);
++	panthera_zfs_phase_add(&panthera_zfs_create_phase.txassign_ns,
++	    txassign_ns);
++	panthera_zfs_phase_add(&panthera_zfs_create_phase.txwait_ns,
++	    txwait_ns);
++	panthera_zfs_phase_add(&panthera_zfs_create_phase.mknode_ns,
++	    mknode_ns);
++	panthera_zfs_phase_add(&panthera_zfs_create_phase.link_ns, link_ns);
++	panthera_zfs_phase_add(&panthera_zfs_create_phase.commit_ns,
++	    commit_ns);
++	panthera_zfs_phase_add(&panthera_zfs_create_phase.vnode_ns,
++	    vnode_ns);
++
++	if ((count & 0xfff) == 0) {
++		printf("PANTHERA:ZFS_PHASE create count=%llu errors=%llu "
++		    "total_ms=%llu dirlock_ms=%llu access_ms=%llu "
++		    "acl_ms=%llu txhold_ms=%llu txassign_ms=%llu "
++		    "txwait_ms=%llu mknode_ms=%llu link_ms=%llu "
++		    "commit_ms=%llu vnode_ms=%llu\n",
++		    (u_longlong_t)count,
++		    (u_longlong_t)panthera_zfs_create_phase.errors,
++		    (u_longlong_t)panthera_zfs_phase_ms(
++		    panthera_zfs_create_phase.total_ns),
++		    (u_longlong_t)panthera_zfs_phase_ms(
++		    panthera_zfs_create_phase.dirlock_ns),
++		    (u_longlong_t)panthera_zfs_phase_ms(
++		    panthera_zfs_create_phase.access_ns),
++		    (u_longlong_t)panthera_zfs_phase_ms(
++		    panthera_zfs_create_phase.acl_ns),
++		    (u_longlong_t)panthera_zfs_phase_ms(
++		    panthera_zfs_create_phase.txhold_ns),
++		    (u_longlong_t)panthera_zfs_phase_ms(
++		    panthera_zfs_create_phase.txassign_ns),
++		    (u_longlong_t)panthera_zfs_phase_ms(
++		    panthera_zfs_create_phase.txwait_ns),
++		    (u_longlong_t)panthera_zfs_phase_ms(
++		    panthera_zfs_create_phase.mknode_ns),
++		    (u_longlong_t)panthera_zfs_phase_ms(
++		    panthera_zfs_create_phase.link_ns),
++		    (u_longlong_t)panthera_zfs_phase_ms(
++		    panthera_zfs_create_phase.commit_ns),
++		    (u_longlong_t)panthera_zfs_phase_ms(
++		    panthera_zfs_create_phase.vnode_ns));
++	}
++}
+ 
++static void
++panthera_zfs_remove_phase_record(int error, uint64_t total_ns,
++    uint64_t dirlock_ns, uint64_t access_ns, uint64_t txhold_ns,
++    uint64_t txassign_ns, uint64_t txwait_ns, uint64_t link_ns,
++    uint64_t unlinked_ns, uint64_t commit_ns, uint64_t release_ns)
++{
++	uint64_t count;
++
++	count = panthera_zfs_phase_inc(&panthera_zfs_remove_phase.count);
++	if (error != 0)
++		panthera_zfs_phase_inc(&panthera_zfs_remove_phase.errors);
++	panthera_zfs_phase_add(&panthera_zfs_remove_phase.total_ns, total_ns);
++	panthera_zfs_phase_add(&panthera_zfs_remove_phase.dirlock_ns,
++	    dirlock_ns);
++	panthera_zfs_phase_add(&panthera_zfs_remove_phase.access_ns,
++	    access_ns);
++	panthera_zfs_phase_add(&panthera_zfs_remove_phase.txhold_ns,
++	    txhold_ns);
++	panthera_zfs_phase_add(&panthera_zfs_remove_phase.txassign_ns,
++	    txassign_ns);
++	panthera_zfs_phase_add(&panthera_zfs_remove_phase.txwait_ns,
++	    txwait_ns);
++	panthera_zfs_phase_add(&panthera_zfs_remove_phase.link_ns, link_ns);
++	panthera_zfs_phase_add(&panthera_zfs_remove_phase.unlinked_ns,
++	    unlinked_ns);
++	panthera_zfs_phase_add(&panthera_zfs_remove_phase.commit_ns,
++	    commit_ns);
++	panthera_zfs_phase_add(&panthera_zfs_remove_phase.release_ns,
++	    release_ns);
++
++	if ((count & 0xfff) == 0) {
++		printf("PANTHERA:ZFS_PHASE remove count=%llu errors=%llu "
++		    "total_ms=%llu dirlock_ms=%llu access_ms=%llu "
++		    "txhold_ms=%llu txassign_ms=%llu txwait_ms=%llu "
++		    "link_ms=%llu unlinked_ms=%llu commit_ms=%llu "
++		    "release_ms=%llu\n",
++		    (u_longlong_t)count,
++		    (u_longlong_t)panthera_zfs_remove_phase.errors,
++		    (u_longlong_t)panthera_zfs_phase_ms(
++		    panthera_zfs_remove_phase.total_ns),
++		    (u_longlong_t)panthera_zfs_phase_ms(
++		    panthera_zfs_remove_phase.dirlock_ns),
++		    (u_longlong_t)panthera_zfs_phase_ms(
++		    panthera_zfs_remove_phase.access_ns),
++		    (u_longlong_t)panthera_zfs_phase_ms(
++		    panthera_zfs_remove_phase.txhold_ns),
++		    (u_longlong_t)panthera_zfs_phase_ms(
++		    panthera_zfs_remove_phase.txassign_ns),
++		    (u_longlong_t)panthera_zfs_phase_ms(
++		    panthera_zfs_remove_phase.txwait_ns),
++		    (u_longlong_t)panthera_zfs_phase_ms(
++		    panthera_zfs_remove_phase.link_ns),
++		    (u_longlong_t)panthera_zfs_phase_ms(
++		    panthera_zfs_remove_phase.unlinked_ns),
++		    (u_longlong_t)panthera_zfs_phase_ms(
++		    panthera_zfs_remove_phase.commit_ns),
++		    (u_longlong_t)panthera_zfs_phase_ms(
++		    panthera_zfs_remove_phase.release_ns));
++	}
++}
++#endif
++
+ /*
+  * Programming rules.
+  *
+@@ -581,6 +767,20 @@
+ 	boolean_t	fuid_dirtied;
+ 	boolean_t	have_acl = B_FALSE;
+ 	boolean_t	waited = B_FALSE;
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++	hrtime_t	phase_start = gethrtime();
++	hrtime_t	phase_op_start;
++	uint64_t	phase_dirlock_ns = 0;
++	uint64_t	phase_access_ns = 0;
++	uint64_t	phase_acl_ns = 0;
++	uint64_t	phase_txhold_ns = 0;
++	uint64_t	phase_txassign_ns = 0;
++	uint64_t	phase_txwait_ns = 0;
++	uint64_t	phase_mknode_ns = 0;
++	uint64_t	phase_link_ns = 0;
++	uint64_t	phase_commit_ns = 0;
++	uint64_t	phase_vnode_ns = 0;
++#endif
+ 
+ 	/*
+ 	 * If we have an ephemeral id, ACL, or XVATTR then
+@@ -633,8 +833,15 @@
+ 		if (flag & FIGNORECASE)
+ 			zflg |= ZCILOOK;
+ 
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++		phase_op_start = gethrtime();
++#endif
+ 		error = zfs_dirent_lock(&dl, dzp, name, &zp, zflg,
+ 		    NULL, NULL);
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++		phase_dirlock_ns += panthera_zfs_phase_delta(phase_op_start,
++		    gethrtime());
++#endif
+ 		if (error) {
+ 			if (have_acl)
+ 				zfs_acl_ids_free(&acl_ids);
+@@ -653,12 +860,23 @@
+ 		 * Create a new file object and update the directory
+ 		 * to reference it.
+ 		 */
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++		phase_op_start = gethrtime();
++#endif
+ 		if ((error = zfs_zaccess(dzp, ACE_ADD_FILE, 0, B_FALSE, cr,
+ 		    NULL))) {
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++			phase_access_ns += panthera_zfs_phase_delta(
++			    phase_op_start, gethrtime());
++#endif
+ 			if (have_acl)
+ 				zfs_acl_ids_free(&acl_ids);
+ 			goto out;
+ 		}
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++		phase_access_ns += panthera_zfs_phase_delta(phase_op_start,
++		    gethrtime());
++#endif
+ 
+ 		/*
+ 		 * We only support the creation of regular files in
+@@ -672,8 +890,18 @@
+ 			goto out;
+ 		}
+ 
+-		if (!have_acl && (error = zfs_acl_ids_create(dzp, 0, vap,
+-		    cr, vsecp, &acl_ids, NULL)) != 0)
++		if (!have_acl) {
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++			phase_op_start = gethrtime();
++#endif
++			error = zfs_acl_ids_create(dzp, 0, vap, cr, vsecp,
++			    &acl_ids, NULL);
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++			phase_acl_ns += panthera_zfs_phase_delta(
++			    phase_op_start, gethrtime());
++#endif
++		}
++		if (!have_acl && error != 0)
+ 			goto out;
+ 		have_acl = B_TRUE;
+ 
+@@ -685,6 +913,9 @@
+ 			goto out;
+ 		}
+ 
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++		phase_op_start = gethrtime();
++#endif
+ 		tx = dmu_tx_create(os);
+ 
+ 		dmu_tx_hold_sa_create(tx, acl_ids.z_aclp->z_acl_bytes +
+@@ -700,14 +931,30 @@
+ 			dmu_tx_hold_write(tx, DMU_NEW_OBJECT,
+ 			    0, acl_ids.z_aclp->z_acl_bytes);
+ 		}
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++		phase_txhold_ns += panthera_zfs_phase_delta(phase_op_start,
++		    gethrtime());
+ 
++		phase_op_start = gethrtime();
++#endif
+ 		error = dmu_tx_assign(tx,
+ 		    (waited ? TXG_NOTHROTTLE : 0) | TXG_NOWAIT);
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++		phase_txassign_ns += panthera_zfs_phase_delta(
++		    phase_op_start, gethrtime());
++#endif
+ 		if (error) {
+ 			zfs_dirent_unlock(dl);
+ 			if (error == ERESTART) {
+ 				waited = B_TRUE;
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++				phase_op_start = gethrtime();
++#endif
+ 				dmu_tx_wait(tx);
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++				phase_txwait_ns += panthera_zfs_phase_delta(
++				    phase_op_start, gethrtime());
++#endif
+ 				dmu_tx_abort(tx);
+ 				goto top;
+ 			}
+@@ -717,9 +964,21 @@
+ 			return (error);
+ 		}
+ 
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++		phase_op_start = gethrtime();
++#endif
+ 		zfs_mknode(dzp, vap, tx, cr, 0, &zp, &acl_ids);
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++		phase_mknode_ns += panthera_zfs_phase_delta(phase_op_start,
++		    gethrtime());
+ 
++		phase_op_start = gethrtime();
++#endif
+ 		error = zfs_link_create(dl, zp, tx, ZNEW);
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++		phase_link_ns += panthera_zfs_phase_delta(phase_op_start,
++		    gethrtime());
++#endif
+ 		if (error != 0) {
+ 			/*
+ 			 * Since, we failed to add the directory entry for it,
+@@ -748,15 +1007,29 @@
+ 		txtype = zfs_log_create_txtype(Z_FILE, vsecp, vap);
+ 		if (flag & FIGNORECASE)
+ 			txtype |= TX_CI;
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++		phase_op_start = gethrtime();
++#endif
+ 		zfs_log_create(zilog, tx, txtype, dzp, zp, name,
+ 		    vsecp, acl_ids.z_fuidp, vap);
+ 		zfs_acl_ids_free(&acl_ids);
+ 		dmu_tx_commit(tx);
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++		phase_commit_ns += panthera_zfs_phase_delta(phase_op_start,
++		    gethrtime());
++#endif
+ 
+ 		/*
+ 		 * OS X - attach the vnode _after_ committing the transaction
+ 		 */
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++		phase_op_start = gethrtime();
++#endif
+ 		zfs_znode_getvnode(zp, zfsvfs);
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++		phase_vnode_ns += panthera_zfs_phase_delta(phase_op_start,
++		    gethrtime());
++#endif
+ 
+ 	} else {
+ 		int aflags = (flag & O_APPEND) ? V_APPEND : 0;
+@@ -821,6 +1094,13 @@
+ 	if (zfsvfs->z_os->os_sync == ZFS_SYNC_ALWAYS)
+ 		zil_commit(zilog, 0);
+ 
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++	panthera_zfs_create_phase_record(error,
++	    panthera_zfs_phase_delta(phase_start, gethrtime()),
++	    phase_dirlock_ns, phase_access_ns, phase_acl_ns, phase_txhold_ns,
++	    phase_txassign_ns, phase_txwait_ns, phase_mknode_ns,
++	    phase_link_ns, phase_commit_ns, phase_vnode_ns);
++#endif
+ 	zfs_exit(zfsvfs, FTAG);
+ 	return (error);
+ }
+@@ -864,6 +1144,19 @@
+ 	int		error;
+ 	int		zflg = ZEXISTS;
+ 	boolean_t	waited = B_FALSE;
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++	hrtime_t	phase_start = gethrtime();
++	hrtime_t	phase_op_start;
++	uint64_t	phase_dirlock_ns = 0;
++	uint64_t	phase_access_ns = 0;
++	uint64_t	phase_txhold_ns = 0;
++	uint64_t	phase_txassign_ns = 0;
++	uint64_t	phase_txwait_ns = 0;
++	uint64_t	phase_link_ns = 0;
++	uint64_t	phase_unlinked_ns = 0;
++	uint64_t	phase_commit_ns = 0;
++	uint64_t	phase_release_ns = 0;
++#endif
+ 
+ 	if (name == NULL)
+ 		return (SET_ERROR(EINVAL));
+@@ -886,17 +1179,37 @@
+ 	/*
+ 	 * Attempt to lock directory; fail if entry doesn't exist.
+ 	 */
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++	phase_op_start = gethrtime();
++#endif
+ 	if ((error = zfs_dirent_lock(&dl, dzp, name, &zp, zflg,
+ 	    NULL, realnmp))) {
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++		phase_dirlock_ns += panthera_zfs_phase_delta(phase_op_start,
++		    gethrtime());
++#endif
+ 		if (realnmp)
+ 			kmem_free(realnm.cn_nameptr, realnm.cn_namelen);
+ 		zfs_exit(zfsvfs, FTAG);
+ 		return (error);
+ 	}
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++	phase_dirlock_ns += panthera_zfs_phase_delta(phase_op_start,
++	    gethrtime());
+ 
++	phase_op_start = gethrtime();
++#endif
+ 	if ((error = zfs_zaccess_delete(dzp, zp, cr, NULL))) {
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++		phase_access_ns += panthera_zfs_phase_delta(phase_op_start,
++		    gethrtime());
++#endif
+ 		goto out;
+ 	}
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++	phase_access_ns += panthera_zfs_phase_delta(phase_op_start,
++	    gethrtime());
++#endif
+ 
+ 	/*
+ 	 * Need to use rmdir for removing directories.
+@@ -918,6 +1231,9 @@
+ 	 * allow for either case.
+ 	 */
+ 	obj = zp->z_id;
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++	phase_op_start = gethrtime();
++#endif
+ 	tx = dmu_tx_create(zfsvfs->z_os);
+ 	dmu_tx_hold_zap(tx, dzp->z_id, FALSE, name);
+ 	dmu_tx_hold_sa(tx, zp->z_sa_hdl, B_FALSE);
+@@ -952,13 +1268,29 @@
+ 	 * Mark this transaction as typically resulting in a net free of space
+ 	 */
+ 	dmu_tx_mark_netfree(tx);
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++	phase_txhold_ns += panthera_zfs_phase_delta(phase_op_start,
++	    gethrtime());
+ 
++	phase_op_start = gethrtime();
++#endif
+ 	error = dmu_tx_assign(tx, (waited ? TXG_NOTHROTTLE : 0) | TXG_NOWAIT);
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++	phase_txassign_ns += panthera_zfs_phase_delta(phase_op_start,
++	    gethrtime());
++#endif
+ 	if (error) {
+ 		zfs_dirent_unlock(dl);
+ 		if (error == ERESTART) {
+ 			waited = B_TRUE;
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++			phase_op_start = gethrtime();
++#endif
+ 			dmu_tx_wait(tx);
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++			phase_txwait_ns += panthera_zfs_phase_delta(
++			    phase_op_start, gethrtime());
++#endif
+ 			dmu_tx_abort(tx);
+ 			zrele(zp);
+ 			if (xzp)
+@@ -978,13 +1310,30 @@
+ 	/*
+ 	 * Remove the directory entry.
+ 	 */
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++	phase_op_start = gethrtime();
++#endif
+ 	error = zfs_link_destroy(dl, zp, tx, zflg, &unlinked);
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++	phase_link_ns += panthera_zfs_phase_delta(phase_op_start,
++	    gethrtime());
++#endif
+ 
+ 	if (error) {
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++		phase_op_start = gethrtime();
++#endif
+ 		dmu_tx_commit(tx);
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++		phase_commit_ns += panthera_zfs_phase_delta(phase_op_start,
++		    gethrtime());
++#endif
+ 		goto out;
+ 	}
+ 
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++	phase_op_start = gethrtime();
++#endif
+ 	if (unlinked) {
+ 		/*
+ 		 * Hold z_lock so that we can make sure that the ACL obj
+@@ -1030,14 +1379,28 @@
+ 		mutex_exit(&zp->z_lock);
+ 		zfs_unlinked_add(zp, tx);
+ 	}
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++	phase_unlinked_ns += panthera_zfs_phase_delta(phase_op_start,
++	    gethrtime());
++#endif
+ 
+ 	txtype = TX_REMOVE;
+ 	if (flags & FIGNORECASE)
+ 		txtype |= TX_CI;
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++	phase_op_start = gethrtime();
++#endif
+ 	zfs_log_remove(zilog, tx, txtype, dzp, name, obj, unlinked);
+ 
+ 	dmu_tx_commit(tx);
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++	phase_commit_ns += panthera_zfs_phase_delta(phase_op_start,
++	    gethrtime());
++#endif
+ out:
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++	phase_op_start = gethrtime();
++#endif
+ 	if (realnmp)
+ 			kmem_free(realnm.cn_nameptr, realnm.cn_namelen);
+ 
+@@ -1054,6 +1417,15 @@
+ 	if (zfsvfs->z_os->os_sync == ZFS_SYNC_ALWAYS)
+ 		zil_commit(zilog, 0);
+ 
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++	phase_release_ns += panthera_zfs_phase_delta(phase_op_start,
++	    gethrtime());
++	panthera_zfs_remove_phase_record(error,
++	    panthera_zfs_phase_delta(phase_start, gethrtime()),
++	    phase_dirlock_ns, phase_access_ns, phase_txhold_ns,
++	    phase_txassign_ns, phase_txwait_ns, phase_link_ns,
++	    phase_unlinked_ns, phase_commit_ns, phase_release_ns);
++#endif
+ 	zfs_exit(zfsvfs, FTAG);
+ 	return (error);
+ }
+--- a/module/os/macos/zfs/zfs_vnops_osx.c	2026-03-09 21:39:08
++++ b/module/os/macos/zfs/zfs_vnops_osx.c	2026-05-30 14:06:12
+@@ -84,6 +84,129 @@
+ unsigned int zfs_disable_trashes = 0;
+ #endif
+ 
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++typedef struct panthera_zfs_vnop_create_phase {
++	volatile uint64_t count;
++	volatile uint64_t errors;
++	volatile uint64_t total_ns;
++	volatile uint64_t core_ns;
++	volatile uint64_t purge_ns;
++	volatile uint64_t vattr_ns;
++	volatile uint64_t identity_ns;
++} panthera_zfs_vnop_create_phase_t;
++
++typedef struct panthera_zfs_vnop_remove_phase {
++	volatile uint64_t count;
++	volatile uint64_t errors;
++	volatile uint64_t total_ns;
++	volatile uint64_t core_ns;
++	volatile uint64_t purge_ns;
++	volatile uint64_t hardlink_ns;
++} panthera_zfs_vnop_remove_phase_t;
++
++static panthera_zfs_vnop_create_phase_t panthera_zfs_vnop_create_phase;
++static panthera_zfs_vnop_remove_phase_t panthera_zfs_vnop_remove_phase;
++
++static uint64_t
++panthera_zfs_vnop_phase_delta(hrtime_t start, hrtime_t end)
++{
++	return (end > start ? (uint64_t)(end - start) : 0);
++}
++
++static void
++panthera_zfs_vnop_phase_add(volatile uint64_t *counter, uint64_t value)
++{
++	atomic_add_64(counter, value);
++}
++
++static uint64_t
++panthera_zfs_vnop_phase_inc(volatile uint64_t *counter)
++{
++	return (atomic_add_64_nv(counter, 1));
++}
++
++static uint64_t
++panthera_zfs_vnop_phase_ms(uint64_t ns)
++{
++	return (ns / 1000000ULL);
++}
++
++static void
++panthera_zfs_vnop_create_phase_record(int error, uint64_t total_ns,
++    uint64_t core_ns, uint64_t purge_ns, uint64_t vattr_ns,
++    uint64_t identity_ns)
++{
++	uint64_t count;
++
++	count = panthera_zfs_vnop_phase_inc(&panthera_zfs_vnop_create_phase.count);
++	if (error != 0)
++		panthera_zfs_vnop_phase_inc(&panthera_zfs_vnop_create_phase.errors);
++	panthera_zfs_vnop_phase_add(&panthera_zfs_vnop_create_phase.total_ns,
++	    total_ns);
++	panthera_zfs_vnop_phase_add(&panthera_zfs_vnop_create_phase.core_ns,
++	    core_ns);
++	panthera_zfs_vnop_phase_add(&panthera_zfs_vnop_create_phase.purge_ns,
++	    purge_ns);
++	panthera_zfs_vnop_phase_add(&panthera_zfs_vnop_create_phase.vattr_ns,
++	    vattr_ns);
++	panthera_zfs_vnop_phase_add(&panthera_zfs_vnop_create_phase.identity_ns,
++	    identity_ns);
++
++	if ((count & 0xfff) == 0) {
++		printf("PANTHERA:ZFS_PHASE vnop_create count=%llu "
++		    "errors=%llu total_ms=%llu core_ms=%llu "
++		    "purge_ms=%llu vattr_ms=%llu identity_ms=%llu\n",
++		    (u_longlong_t)count,
++		    (u_longlong_t)panthera_zfs_vnop_create_phase.errors,
++		    (u_longlong_t)panthera_zfs_vnop_phase_ms(
++		    panthera_zfs_vnop_create_phase.total_ns),
++		    (u_longlong_t)panthera_zfs_vnop_phase_ms(
++		    panthera_zfs_vnop_create_phase.core_ns),
++		    (u_longlong_t)panthera_zfs_vnop_phase_ms(
++		    panthera_zfs_vnop_create_phase.purge_ns),
++		    (u_longlong_t)panthera_zfs_vnop_phase_ms(
++		    panthera_zfs_vnop_create_phase.vattr_ns),
++		    (u_longlong_t)panthera_zfs_vnop_phase_ms(
++		    panthera_zfs_vnop_create_phase.identity_ns));
++	}
++}
++
++static void
++panthera_zfs_vnop_remove_phase_record(int error, uint64_t total_ns,
++    uint64_t core_ns, uint64_t purge_ns, uint64_t hardlink_ns)
++{
++	uint64_t count;
++
++	count = panthera_zfs_vnop_phase_inc(&panthera_zfs_vnop_remove_phase.count);
++	if (error != 0)
++		panthera_zfs_vnop_phase_inc(&panthera_zfs_vnop_remove_phase.errors);
++	panthera_zfs_vnop_phase_add(&panthera_zfs_vnop_remove_phase.total_ns,
++	    total_ns);
++	panthera_zfs_vnop_phase_add(&panthera_zfs_vnop_remove_phase.core_ns,
++	    core_ns);
++	panthera_zfs_vnop_phase_add(&panthera_zfs_vnop_remove_phase.purge_ns,
++	    purge_ns);
++	panthera_zfs_vnop_phase_add(&panthera_zfs_vnop_remove_phase.hardlink_ns,
++	    hardlink_ns);
++
++	if ((count & 0xfff) == 0) {
++		printf("PANTHERA:ZFS_PHASE vnop_remove count=%llu "
++		    "errors=%llu total_ms=%llu core_ms=%llu "
++		    "purge_ms=%llu hardlink_ms=%llu\n",
++		    (u_longlong_t)count,
++		    (u_longlong_t)panthera_zfs_vnop_remove_phase.errors,
++		    (u_longlong_t)panthera_zfs_vnop_phase_ms(
++		    panthera_zfs_vnop_remove_phase.total_ns),
++		    (u_longlong_t)panthera_zfs_vnop_phase_ms(
++		    panthera_zfs_vnop_remove_phase.core_ns),
++		    (u_longlong_t)panthera_zfs_vnop_phase_ms(
++		    panthera_zfs_vnop_remove_phase.purge_ns),
++		    (u_longlong_t)panthera_zfs_vnop_phase_ms(
++		    panthera_zfs_vnop_remove_phase.hardlink_ns));
++	}
++}
++#endif
++
+ #define	DECLARE_CRED(ap) \
+ 	cred_t *cr = (cred_t *)vfs_context_ucred((ap)->a_context)
+ #define	DECLARE_CONTEXT(ap) \
+@@ -1491,6 +1613,14 @@
+ 	int mode = 0;	/* FIXME */
+ 	int error;
+ 	znode_t *zp = NULL;
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++	hrtime_t phase_start = gethrtime();
++	hrtime_t phase_op_start;
++	uint64_t phase_core_ns = 0;
++	uint64_t phase_purge_ns = 0;
++	uint64_t phase_vattr_ns = 0;
++	uint64_t phase_identity_ns = 0;
++#endif
+ 
+ 	dprintf("vnop_create: '%s'\n", cnp->cn_nameptr);
+ 
+@@ -1515,10 +1645,25 @@
+ 	}
+ 
+ 
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++	phase_op_start = gethrtime();
++#endif
+ 	error = zfs_create(VTOZ(ap->a_dvp), cnp->cn_nameptr, vap, excl, mode,
+ 	    &zp, cr, 0, NULL, NULL);
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++	phase_core_ns += panthera_zfs_vnop_phase_delta(phase_op_start,
++	    gethrtime());
++#endif
+ 	if (!error) {
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++		phase_op_start = gethrtime();
++#endif
+ 		zfs_vnop_purge_negatives(ap->a_dvp);
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++		phase_purge_ns += panthera_zfs_vnop_phase_delta(
++		    phase_op_start, gethrtime());
++		phase_op_start = gethrtime();
++#endif
+ 		*ap->a_vpp = ZTOV(zp);
+ 
+ 		// Also tell XNU what VAPs we handled.
+@@ -1554,15 +1693,29 @@
+ 			    vap->va_active, vap->va_supported,
+ 			    missing);
+ 		}
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++		phase_vattr_ns += panthera_zfs_vnop_phase_delta(
++		    phase_op_start, gethrtime());
++		phase_op_start = gethrtime();
++#endif
+ 
+ 		/* We need to update name here for NFS; issue #104 */
+ 		vnode_update_identity(*ap->a_vpp, NULL,
+ 			(const char *)ap->a_cnp->cn_nameptr,
+ 			ap->a_cnp->cn_namelen, 0,
+ 			VNODE_UPDATE_NAME);
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++		phase_identity_ns += panthera_zfs_vnop_phase_delta(
++		    phase_op_start, gethrtime());
++#endif
+ 
+ 	}
+ 
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++	panthera_zfs_vnop_create_phase_record(error,
++	    panthera_zfs_vnop_phase_delta(phase_start, gethrtime()),
++	    phase_core_ns, phase_purge_ns, phase_vattr_ns, phase_identity_ns);
++#endif
+ 	return (error);
+ }
+ 
+@@ -1748,16 +1901,38 @@
+ 	DECLARE_CRED(ap);
+ 	int error;
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++	hrtime_t phase_start = gethrtime();
++	hrtime_t phase_op_start;
++	uint64_t phase_core_ns = 0;
++	uint64_t phase_purge_ns = 0;
++	uint64_t phase_hardlink_ns = 0;
++#endif
+ 
+ 	dprintf("vnop_remove: %p (%s)\n", ap->a_vp, ap->a_cnp->cn_nameptr);
+ 
+ 	/*
+ 	 * extern int zfs_remove ( struct vnode *dvp, char *name, cred_t *cr,
+ 	 *     caller_context_t *ct, int flags);
+ 	 */
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++	phase_op_start = gethrtime();
++#endif
+ 	error = zfs_remove(VTOZ(ap->a_dvp), ap->a_cnp->cn_nameptr, cr,
+ 	    /* flags */0);
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++	phase_core_ns += panthera_zfs_vnop_phase_delta(phase_op_start,
++	    gethrtime());
++#endif
+ 	if (!error) {
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++		phase_op_start = gethrtime();
++#endif
+ 		cache_purge(ap->a_vp);
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++		phase_purge_ns += panthera_zfs_vnop_phase_delta(
++		    phase_op_start, gethrtime());
++		phase_op_start = gethrtime();
++#endif
+ 
+ 		zfs_remove_hardlink(ap->a_vp,
+ 		    ap->a_dvp,
+@@ -1763,7 +1939,16 @@
+ 	} else {
+ 		dprintf("%s error %d\n", __func__, error);
+ 	}
++#ifdef PANTHERA_ZFS_VNOPS_PHASE_TRACE
++	if (!error) {
++		phase_hardlink_ns += panthera_zfs_vnop_phase_delta(
++		    phase_op_start, gethrtime());
++	}
++	panthera_zfs_vnop_remove_phase_record(error,
++	    panthera_zfs_vnop_phase_delta(phase_start, gethrtime()),
++	    phase_core_ns, phase_purge_ns, phase_hardlink_ns);
++#endif
+ 
+ 	return (error);
+ }
+ 

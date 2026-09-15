@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.apple.configd</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/sbin/configd</string>
+    </array>
+    <key>MachServices</key>
+    <dict>
+        <key>com.apple.SystemConfiguration.configd</key>
+        <true/>
+    </dict>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PANTHERA_CONFIGD_NETWORK_STATE_INTERNAL</key>
+        <string>1</string>
+        <key>PANTHERA_CONFIGD_KERNEL_EVENT_MONITOR</key>
+        <string>1</string>
+        <key>PANTHERA_CONFIGD_FILE_LOG</key>
+        <string>1</string>
+	</dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>

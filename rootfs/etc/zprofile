@@ -1,0 +1,12 @@
+print -n '\033[2J\033[H'
+
+if [ -f /etc/motd ]; then
+    cat /etc/motd
+fi
+print ""
+
+# Run CF test only when explicitly requested. The CFDictionary path is still
+# under active bring-up and must not block every interactive login.
+if [ "${PANTHERA_RUN_LOGIN_CF_TEST:-0}" = "1" ] && [ -x /usr/bin/test_cf ]; then
+    /usr/bin/test_cf
+fi

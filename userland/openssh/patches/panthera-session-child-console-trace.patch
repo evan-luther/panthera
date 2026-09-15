@@ -1,0 +1,104 @@
+--- session.c.orig
++++ session.c
+@@ -109,6 +109,29 @@
+ 	  c[sizeof(INTERNAL_SFTP_NAME) - 1] == ' ' || \
+ 	  c[sizeof(INTERNAL_SFTP_NAME) - 1] == '\t'))
+ 
++#ifdef PANTHERA
++static void
++panthera_session_child_trace(const char *label)
++{
++	char buf[192];
++	int fd, n;
++
++	n = snprintf(buf, sizeof(buf),
++	    "PANTHERA:sshd child pid=%ld %s\n", (long)getpid(), label);
++	if (n < 0)
++		return;
++	if ((size_t)n > sizeof(buf))
++		n = sizeof(buf);
++	fd = open("/dev/console", O_WRONLY | O_NONBLOCK);
++	if (fd >= 0) {
++		(void)write(fd, buf, (size_t)n);
++		(void)close(fd);
++	}
++}
++#else
++#define panthera_session_child_trace(label) do { } while (0)
++#endif
++
+ /* func */
+ 
+ Session *session_new(void);
+@@ -1520,6 +1543,7 @@
+ 	int r = 0;
+ 
+ 	sshpkt_fmt_connection_id(ssh, remote_id, sizeof(remote_id));
++	panthera_session_child_trace("do_child enter");
+ 
+ 	/* remove hostkey from the child's memory */
+ 	destroy_sensitive_data();
+@@ -1545,14 +1569,19 @@
+ 	/* When PAM is enabled we rely on it to do the nologin check */
+ 	if (!options.use_pam)
+ 		do_nologin(pw);
++	panthera_session_child_trace("before do_setusercontext");
+ 	do_setusercontext(pw);
++	panthera_session_child_trace("after do_setusercontext");
+ 	/*
+ 	 * PAM session modules in do_setusercontext may have
+ 	 * generated messages, so if this in an interactive
+ 	 * login then display them too.
+ 	 */
+-	if (!check_quietlogin(s, command))
++	if (!check_quietlogin(s, command)) {
++		panthera_session_child_trace("before display_loginmsg");
+ 		display_loginmsg();
++		panthera_session_child_trace("after display_loginmsg");
++	}
+ #endif /* HAVE_OSF_SIA */
+ 
+ #ifdef USE_PAM
+@@ -1573,7 +1602,9 @@
+ 	 * Make sure $SHELL points to the shell from the password file,
+ 	 * even if shell is overridden from login.conf
+ 	 */
++	panthera_session_child_trace("before do_setup_env");
+ 	env = do_setup_env(ssh, s, shell);
++	panthera_session_child_trace("after do_setup_env");
+ 
+ #ifdef HAVE_LOGIN_CAP
+ 	shell = login_getcapstr(lc, "shell", (char *)shell, (char *)shell);
+@@ -1586,7 +1617,9 @@
+ 	 * closed before building the environment, as we call
+ 	 * ssh_remote_ipaddr there.
+ 	 */
++	panthera_session_child_trace("before child_close_fds");
+ 	child_close_fds(ssh);
++	panthera_session_child_trace("after child_close_fds");
+ 
+ 	/*
+ 	 * Must take new environment into use so that .ssh/rc,
+@@ -1635,9 +1668,14 @@
+ 			exit(1);
+ 	}
+ 
++	panthera_session_child_trace("after chdir");
++
+ 	closefrom(STDERR_FILENO + 1);
++	panthera_session_child_trace("after closefrom");
+ 
++	panthera_session_child_trace("before do_rc_files");
+ 	do_rc_files(ssh, s, shell);
++	panthera_session_child_trace("after do_rc_files");
+ 
+ 	/* restore SIGPIPE for child */
+ 	ssh_signal(SIGPIPE, SIG_DFL);
+@@ -1710,6 +1748,7 @@
+ 	argv[1] = "-c";
+ 	argv[2] = (char *) command;
+ 	argv[3] = NULL;
++	panthera_session_child_trace("before exec command");
+ 	execve(shell, argv, env);
+ 	perror(shell);
+ 	exit(1);

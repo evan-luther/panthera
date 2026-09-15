@@ -1,0 +1,373 @@
+--- sshd.c.orig
++++ sshd.c
+@@ -128,6 +128,53 @@
+ #include "srclimit.h"
+ #include "dh.h"
+ 
++#ifdef PANTHERA
++static void
++panthera_sshd_trace(const char *message)
++{
++	size_t len = 0;
++#if defined(__x86_64__)
++	long ret;
++#endif
++	int fd;
++
++	if (message == NULL)
++		return;
++	while (message[len] != '\0')
++		len++;
++#if defined(__x86_64__)
++	__asm__ volatile("syscall" : "=a"(ret)
++	    : "a"(0x2000004), "D"(STDERR_FILENO), "S"(message), "d"(len)
++	    : "rcx", "r11", "memory");
++	__asm__ volatile("syscall" : "=a"(ret)
++	    : "a"(0x2000004), "D"(STDERR_FILENO), "S"("\n"), "d"(1)
++	    : "rcx", "r11", "memory");
++#else
++	(void)write(STDERR_FILENO, message, len);
++	(void)write(STDERR_FILENO, "\n", 1);
++#endif
++	fd = open("/dev/console", O_WRONLY | O_NOCTTY | O_NONBLOCK);
++	if (fd >= 0) {
++		(void)write(fd, message, len);
++		(void)write(fd, "\n", 1);
++		(void)close(fd);
++	}
++}
++
++static void
++panthera_sshd_tracef(const char *fmt, ...)
++{
++	char buf[256];
++	va_list ap;
++
++	va_start(ap, fmt);
++	(void)vsnprintf(buf, sizeof(buf), fmt, ap);
++	va_end(ap);
++	buf[sizeof(buf) - 1] = '\0';
++	panthera_sshd_trace(buf);
++}
++#endif
++
+ /* Re-exec fds */
+ #define REEXEC_DEVCRYPTO_RESERVED_FD	(STDERR_FILENO + 1)
+ #define REEXEC_STARTUP_PIPE_FD		(STDERR_FILENO + 2)
+@@ -969,12 +1016,18 @@
+ 	int r;
+ 	struct include_item *item;
+ 
++#ifdef PANTHERA
++	panthera_sshd_tracef("PANTHERA:sshd recv_rexec_state enter fd=%d", fd);
++#endif
+ 	debug3_f("entering fd = %d", fd);
+ 
+ 	if ((m = sshbuf_new()) == NULL || (inc = sshbuf_new()) == NULL)
+ 		fatal_f("sshbuf_new failed");
+ 	if (ssh_msg_recv(fd, m) == -1)
+ 		fatal_f("ssh_msg_recv failed");
++#ifdef PANTHERA
++	panthera_sshd_tracef("PANTHERA:sshd recv_rexec_state msg_recv ok mlen=%zu", sshbuf_len(m));
++#endif
+ 	if ((r = sshbuf_get_u8(m, &ver)) != 0)
+ 		fatal_fr(r, "parse version");
+ 	if (ver != 0)
+@@ -983,6 +1036,9 @@
+ 	    (r = sshbuf_get_stringb(m, inc)) != 0)
+ 		fatal_fr(r, "parse config");
+ 
++#ifdef PANTHERA
++	panthera_sshd_tracef("PANTHERA:sshd recv_rexec_state parsed cfg_len=%zu includes_len=%zu", len, sshbuf_len(inc));
++#endif
+ 	if (conf != NULL && (r = sshbuf_put(conf, cp, len)))
+ 		fatal_fr(r, "sshbuf_put");
+ 
+@@ -1000,6 +1056,9 @@
+ 	free(cp);
+ 	sshbuf_free(m);
+ 
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd recv_rexec_state returned");
++#endif
+ 	debug3_f("done");
+ }
+ 
+@@ -1007,6 +1066,9 @@
+ static void
+ server_accept_inetd(int *sock_in, int *sock_out)
+ {
++#ifdef PANTHERA
++	panthera_sshd_tracef("PANTHERA:sshd server_accept_inetd enter rexeced=%d", rexeced_flag);
++#endif
+ 	if (rexeced_flag) {
+ 		close(REEXEC_CONFIG_PASS_FD);
+ 		*sock_in = *sock_out = dup(STDIN_FILENO);
+@@ -1022,6 +1084,9 @@
+ 	if (stdfd_devnull(1, 1, !log_stderr) == -1)
+ 		error_f("stdfd_devnull failed");
+ 	debug("inetd sockets after dupping: %d, %d", *sock_in, *sock_out);
++#ifdef PANTHERA
++	panthera_sshd_tracef("PANTHERA:sshd server_accept_inetd returned in=%d out=%d", *sock_in, *sock_out);
++#endif
+ }
+ 
+ /*
+@@ -1131,7 +1196,7 @@
+ server_accept_loop(int *sock_in, int *sock_out, int *newsock, int *config_s)
+ {
+ 	struct pollfd *pfd = NULL;
+-	int i, j, ret, npfd;
++	int i, j, ret, npfd, poll_errno = 0;
+ 	int ostartups = -1, startups = 0, listening = 0, lameduck = 0;
+ 	int startup_p[2] = { -1 , -1 }, *startup_pollfd;
+ 	char c = 0;
+@@ -1163,6 +1228,10 @@
+ 	/* sized for worst-case */
+ 	pfd = xcalloc(num_listen_socks + options.max_startups,
+ 	    sizeof(struct pollfd));
++
++#ifdef PANTHERA
++	panthera_sshd_tracef("PANTHERA:sshd accept loop enter listen_socks=%d max_startups=%d", num_listen_socks, options.max_startups);
++#endif
+ 
+ 	/*
+ 	 * Stay listening for connections until the system crashes or
+@@ -1210,14 +1279,22 @@
+ 			}
+ 		}
+ 
++#ifdef PANTHERA
++		panthera_sshd_tracef("PANTHERA:sshd ppoll enter npfd=%d listen_fd0=%d events0=0x%x startups=%d listening=%d", npfd, num_listen_socks > 0 ? listen_socks[0] : -1, num_listen_socks > 0 ? pfd[0].events : 0, startups, listening);
++#endif
++
+ 		/* Wait until a connection arrives or a child exits. */
+ 		ret = ppoll(pfd, npfd, NULL, &osigset);
++		poll_errno = errno;
+ 		if (ret == -1 && errno != EINTR) {
+ 			error("ppoll: %.100s", strerror(errno));
+ 			if (errno == EINVAL)
+ 				cleanup_exit(1); /* can't recover */
+ 		}
+ 		sigprocmask(SIG_SETMASK, &osigset, NULL);
++#ifdef PANTHERA
++		panthera_sshd_tracef("PANTHERA:sshd ppoll returned ret=%d errno=%d revents0=0x%x", ret, poll_errno, num_listen_socks > 0 ? pfd[0].revents : 0);
++#endif
+ 		if (ret == -1)
+ 			continue;
+ 
+@@ -1257,10 +1334,16 @@
+ 		for (i = 0; i < num_listen_socks; i++) {
+ 			if (!(pfd[i].revents & POLLIN))
+ 				continue;
++#ifdef PANTHERA
++			panthera_sshd_tracef("PANTHERA:sshd accept ready index=%d fd=%d revents=0x%x", i, listen_socks[i], pfd[i].revents);
++#endif
+ 			fromlen = sizeof(from);
+ 			*newsock = accept(listen_socks[i],
+ 			    (struct sockaddr *)&from, &fromlen);
+ 			if (*newsock == -1) {
++#ifdef PANTHERA
++				panthera_sshd_tracef("PANTHERA:sshd accept failed fd=%d errno=%d", listen_socks[i], errno);
++#endif
+ 				if (errno != EINTR && errno != EWOULDBLOCK &&
+ 				    errno != ECONNABORTED && errno != EAGAIN)
+ 					error("accept: %.100s",
+@@ -1269,6 +1352,9 @@
+ 					usleep(100 * 1000);
+ 				continue;
+ 			}
++#ifdef PANTHERA
++			panthera_sshd_tracef("PANTHERA:sshd accept returned newsock=%d", *newsock);
++#endif
+ 			if (unset_nonblock(*newsock) == -1) {
+ 				close(*newsock);
+ 				continue;
+@@ -1576,6 +1662,9 @@
+ #ifdef HAVE_SECUREWARE
+ 	(void)set_auth_parameters(ac, av);
+ #endif
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd main enter");
++#endif
+ 	__progname = ssh_get_progname(av[0]);
+ 
+ 	sigemptyset(&sigmask);
+@@ -1728,7 +1817,13 @@
+ 	else
+ 		closefrom(REEXEC_DEVCRYPTO_RESERVED_FD);
+ 
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd seed_rng enter");
++#endif
+ 	seed_rng();
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd seed_rng returned");
++#endif
+ 
+ 	/* If requested, redirect the logs to the specified logfile. */
+ 	if (logfile != NULL)
+@@ -1767,6 +1862,9 @@
+ 	if (rexeced_flag) {
+ 		setproctitle("%s", "[rexeced]");
+ 		recv_rexec_state(REEXEC_CONFIG_PASS_FD, cfg);
++#ifdef PANTHERA
++		panthera_sshd_trace("PANTHERA:sshd reexec recv_rexec_state returned");
++#endif
+ 		if (!debug_flag) {
+ 			startup_pipe = dup(REEXEC_STARTUP_PIPE_FD);
+ 			close(REEXEC_STARTUP_PIPE_FD);
+@@ -1774,22 +1872,45 @@
+ 			 * Signal parent that this child is at a point where
+ 			 * they can go away if they have a SIGHUP pending.
+ 			 */
++#ifdef PANTHERA
++			panthera_sshd_tracef("PANTHERA:sshd reexec startup_pipe dup=%d write enter", startup_pipe);
++#endif
+ 			(void)atomicio(vwrite, startup_pipe, "\0", 1);
++#ifdef PANTHERA
++			panthera_sshd_trace("PANTHERA:sshd reexec startup_pipe write returned");
++#endif
+ 		}
+ 	} else if (strcasecmp(config_file_name, "none") != 0)
+ 		load_server_config(config_file_name, cfg);
+ 
++#ifdef PANTHERA
++	panthera_sshd_tracef("PANTHERA:sshd parse config enter reexec=%d cfg_len=%zu", rexeced_flag, sshbuf_len(cfg));
++#endif
+ 	parse_server_config(&options, rexeced_flag ? "rexec" : config_file_name,
+ 	    cfg, &includes, NULL, rexeced_flag);
+ 
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd parse config returned");
++#endif
+ #ifdef WITH_OPENSSL
+ 	if (options.moduli_file != NULL)
+ 		dh_set_moduli_file(options.moduli_file);
+ #endif
+ 
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd fill_default_server_options enter");
++#endif
+ 	/* Fill in default values for those options not explicitly set. */
+ 	fill_default_server_options(&options, !rexeced_flag);
+-
++#ifdef PANTHERA
++	panthera_sshd_tracef("PANTHERA:sshd fill_default_server_options returned num_host_keys=%d num_ports=%d use_privsep=%d",
++	    options.num_host_key_files, options.num_ports, use_privsep);
++#endif
++
++#ifdef PANTHERA
++	panthera_sshd_tracef("PANTHERA:sshd options check enter num_auth_methods=%d optind=%d ac=%d",
++	    options.num_auth_methods, optind, ac);
++#endif
+ 	/* Check that options are sensible */
+ 	if (options.authorized_keys_command_user == NULL &&
+ 	    (options.authorized_keys_command != NULL &&
+@@ -1832,17 +1953,38 @@
+ 
+ 	/* Store privilege separation user for later use if required. */
+ 	privsep_chroot = use_privsep && (getuid() == 0 || geteuid() == 0);
++#ifdef PANTHERA
++	panthera_sshd_tracef("PANTHERA:sshd getpwnam enter user=%s privsep_chroot=%d",
++	    SSH_PRIVSEP_USER, privsep_chroot);
++#endif
+ 	if ((privsep_pw = getpwnam(SSH_PRIVSEP_USER)) == NULL) {
++#ifdef PANTHERA
++		panthera_sshd_tracef("PANTHERA:sshd getpwnam failed user=%s errno=%d",
++		    SSH_PRIVSEP_USER, errno);
++#endif
+ 		if (privsep_chroot || options.kerberos_authentication)
+ 			fatal("Privilege separation user %s does not exist",
+ 			    SSH_PRIVSEP_USER);
+ 	} else {
++#ifdef PANTHERA
++		panthera_sshd_tracef("PANTHERA:sshd getpwnam ok user=%s uid=%u gid=%u",
++		    privsep_pw->pw_name, (unsigned)privsep_pw->pw_uid, (unsigned)privsep_pw->pw_gid);
++#endif
+ 		privsep_pw = pwcopy(privsep_pw);
++#ifdef PANTHERA
++		panthera_sshd_trace("PANTHERA:sshd pwcopy returned");
++#endif
+ 		freezero(privsep_pw->pw_passwd, strlen(privsep_pw->pw_passwd));
+ 		privsep_pw->pw_passwd = xstrdup("*");
+ 	}
+ 	endpwent();
+-
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd endpwent returned");
++#endif
++
++#ifdef PANTHERA
++	panthera_sshd_tracef("PANTHERA:sshd hostkeys enter num_files=%d", options.num_host_key_files);
++#endif
+ 	/* load host keys */
+ 	sensitive_data.host_keys = xcalloc(options.num_host_key_files,
+ 	    sizeof(struct sshkey *));
+@@ -1866,10 +2008,18 @@
+ 
+ 		if (options.host_key_files[i] == NULL)
+ 			continue;
++#ifdef PANTHERA
++		panthera_sshd_tracef("PANTHERA:sshd hostkey[%d] file=%s load enter",
++		    i, options.host_key_files[i]);
++#endif
+ 		if ((r = sshkey_load_private(options.host_key_files[i], "",
+ 		    &key, NULL)) != 0 && r != SSH_ERR_SYSTEM_ERROR)
+ 			do_log2_r(r, ll, "Unable to load host key \"%s\"",
+ 			    options.host_key_files[i]);
++#ifdef PANTHERA
++		panthera_sshd_tracef("PANTHERA:sshd hostkey[%d] file=%s load returned r=%d key=%p",
++		    i, options.host_key_files[i], r, (void *)key);
++#endif
+ 		if (sshkey_is_sk(key) &&
+ 		    key->sk_flags & SSH_SK_USER_PRESENCE_REQD) {
+ 			debug("host key %s requires user presence, ignoring",
+@@ -1945,6 +2095,9 @@
+ 		free(fp);
+ 	}
+ 	accumulate_host_timing_secret(cfg, NULL);
++#ifdef PANTHERA
++	panthera_sshd_tracef("PANTHERA:sshd hostkeys returned have_ssh2_key=%d", sensitive_data.have_ssh2_key);
++#endif
+ 	if (!sensitive_data.have_ssh2_key) {
+ 		logit("sshd: no hostkeys available -- exiting.");
+ 		exit(1);
+@@ -2028,6 +2181,9 @@
+ 	 */
+ 	if (setgroups(0, NULL) < 0)
+ 		debug("setgroups() failed: %.200s", strerror(errno));
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd setgroups returned");
++#endif
+ 
+ 	if (rexec_flag) {
+ 		if (rexec_argc < 0)
+@@ -2051,6 +2207,9 @@
+ 		log_stderr = 1;
+ 	log_init(__progname, options.log_level,
+ 	    options.log_facility, log_stderr);
++#ifdef PANTHERA
++	panthera_sshd_trace("PANTHERA:sshd log init returned");
++#endif
+ 	for (i = 0; i < options.num_log_verbose; i++)
+ 		log_verbose_add(options.log_verbose[i]);
+ 
+@@ -2084,8 +2243,17 @@
+ 	if (inetd_flag) {
+ 		server_accept_inetd(&sock_in, &sock_out);
+ 	} else {
++#ifdef PANTHERA
++		panthera_sshd_trace("PANTHERA:sshd platform_pre_listen enter");
++#endif
+ 		platform_pre_listen();
++#ifdef PANTHERA
++		panthera_sshd_trace("PANTHERA:sshd server_listen enter");
++#endif
+ 		server_listen();
++#ifdef PANTHERA
++		panthera_sshd_trace("PANTHERA:sshd server_listen returned");
++#endif
+ 
+ 		ssh_signal(SIGHUP, sighup_handler);
+ 		ssh_signal(SIGCHLD, main_sigchld_handler);

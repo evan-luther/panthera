@@ -1,0 +1,53 @@
+diff --git a/module/os/macos/zfs/zfs_vfsops.c b/module/os/macos/zfs/zfs_vfsops.c
+index 8f59887..a64e9ce 100644
+--- a/module/os/macos/zfs/zfs_vfsops.c
++++ b/module/os/macos/zfs/zfs_vfsops.c
+@@ -44,6 +44,7 @@
+ #include <sys/dsl_dir.h>
+ #include <sys/dataset_kstats.h>
+ #include <sys/spa_impl.h> // spa_freeze_txg
++#include <pexpert/pexpert.h>
+ #include <sys/zfs_boot.h>
+ 
+ #define	vfs_optionisset(X, Y, Z) (vfs_flags(X)&(Y))
+@@ -1218,5 +1219,28 @@ zfs_vfs_sync(vfs_t *vfsp, int waitfor, vfs_context_t ctx)
+  * 0 on success, positive int on failure.
+  */
++static boolean_t
++zfs_vfs_mountroot_requested(void)
++{
++	char root_arg[MAXPATHLEN];
++
++	if (PE_parse_boot_argn("zfs_boot", root_arg, sizeof (root_arg)) &&
++	    root_arg[0] != '\0') {
++		return (B_TRUE);
++	}
++
++	if (PE_parse_boot_argn("rd", root_arg, sizeof (root_arg)) &&
++	    strncmp(root_arg, "zfs:", 4) == 0) {
++		return (B_TRUE);
++	}
++
++	if (PE_parse_boot_argn("rootdev", root_arg, sizeof (root_arg)) &&
++	    strncmp(root_arg, "zfs:", 4) == 0) {
++		return (B_TRUE);
++	}
++
++	return (B_FALSE);
++}
++
+ int
+ zfs_vfs_mountroot(struct mount *mp, struct vnode *devvp, vfs_context_t ctx)
+ {
+@@ -1234,6 +1257,11 @@ zfs_vfs_mountroot(struct mount *mp, struct vnode *devvp, vfs_context_t ctx)
+ 	int error = EINVAL;
+ 
+ 	printf("ZFS: %s\n", __func__);
++	if (!zfs_vfs_mountroot_requested()) {
++		printf("ZFS: %s skipped; no ZFS root boot argument\n", __func__);
++		return (ENODEV);
++	}
++
+ 	ASSERT(mp);
+ 	ASSERT(devvp);
+ 	ASSERT(ctx);

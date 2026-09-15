@@ -1,0 +1,6 @@
+#ifndef PANTHERA_FORWARD_IOKIT_HID_IOHIDKEYBOARD_H
+#define PANTHERA_FORWARD_IOKIT_HID_IOHIDKEYBOARD_H
+
+#include "../../../../src/IOHIDFamily-2008.40.6/IOHIDFamily/IOHIDKeyboard.h"
+
+#endif

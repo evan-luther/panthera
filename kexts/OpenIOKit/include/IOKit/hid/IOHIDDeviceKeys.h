@@ -1,0 +1,6 @@
+#ifndef PANTHERA_WRAPPER_IOKIT_HID_IOHIDDEVICEKEYS_H
+#define PANTHERA_WRAPPER_IOKIT_HID_IOHIDDEVICEKEYS_H
+
+#include "../../../../src/IOHIDFamily-2008.40.6/IOHIDFamily/IOHIDDeviceKeys.h"
+
+#endif
